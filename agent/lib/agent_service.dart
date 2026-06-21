@@ -23,6 +23,9 @@ class AgentService {
   /// Active TCP sockets keyed by channelId.
   final Map<String, Socket> _sockets = {};
 
+  /// Queued data frames for channels that are currently connecting.
+  final Map<String, List<List<int>>> _pendingData = {};
+
   // ── Stats ─────────────────────────────────────────────────────────────────
   int bytesReceived = 0;
   int bytesSent = 0;
@@ -145,6 +148,9 @@ class AgentService {
       if (socket != null) {
         socket.add(data);
         bytesSent += data.length;
+      } else if (_pendingData.containsKey(channelId)) {
+        _log.fine('Queueing data frame for pending channel $channelId');
+        _pendingData[channelId]!.add(data);
       } else {
         _log.warning('Data for unknown channel $channelId — dropping');
       }
@@ -157,6 +163,7 @@ class AgentService {
 
   Future<void> _openChannel(String channelId, String host, int port) async {
     _log.info('Opening channel $channelId → $host:$port');
+    _pendingData[channelId] = [];
     try {
       final socket = await Socket.connect(
         host,
@@ -168,6 +175,15 @@ class AgentService {
 
       // Confirm to relay
       _channel?.sink.add(Protocol.openedMessage(channelId));
+
+      // Flush any queued data to the socket
+      final queue = _pendingData.remove(channelId);
+      if (queue != null) {
+        for (final data in queue) {
+          socket.add(data);
+          bytesSent += data.length;
+        }
+      }
 
       // Forward TCP data → relay
       socket.listen(
@@ -188,15 +204,18 @@ class AgentService {
         cancelOnError: true,
       );
     } on SocketException catch (e) {
+      _pendingData.remove(channelId);
       _log.warning('Cannot connect to $host:$port — ${e.message}');
       _channel?.sink.add(Protocol.errorMessage(channelId, e.message));
     } catch (e) {
+      _pendingData.remove(channelId);
       _log.warning('Error opening channel $channelId: $e');
       _channel?.sink.add(Protocol.errorMessage(channelId, e.toString()));
     }
   }
 
   void _closeChannel(String channelId, {required bool notify}) {
+    _pendingData.remove(channelId);
     final socket = _sockets.remove(channelId);
     if (socket != null) {
       socket.destroy();
@@ -212,5 +231,6 @@ class AgentService {
       socket.destroy();
     }
     _sockets.clear();
+    _pendingData.clear();
   }
 }
