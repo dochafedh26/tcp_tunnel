@@ -9,7 +9,10 @@ const RelaySession = require('./session');
 const logger = require('./logger');
 const { parseMessage } = require('./protocol');
 
-const PORT = parseInt(process.env.PORT || '8080', 10);
+// Phusion Passenger (cPanel Node.js App Manager) passes a socket path in process.env.PORT instead of a number.
+// We must parse it as an integer only if it's a numeric string, otherwise use the raw value (for socket path).
+const rawPort = process.env.PORT || '8080';
+const PORT = /^\d+$/.test(rawPort) ? parseInt(rawPort, 10) : rawPort;
 const AUTH_TOKEN = process.env.AUTH_TOKEN || 'changeme';
 const AUTH_TIMEOUT_MS = 10_000;
 
