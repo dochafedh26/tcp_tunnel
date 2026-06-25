@@ -1,91 +1,259 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
+import 'package:uuid/uuid.dart';
 import '../services/settings_service.dart';
+import '../models/machine_profile.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
+
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  late TextEditingController _urlCtrl;
-  late TextEditingController _tokenCtrl;
-  bool _tokenObscured = true;
   bool _autoReconnect = true;
-  bool _dirty = false;
 
   @override
   void initState() {
     super.initState();
     final s = context.read<SettingsService>();
-    _urlCtrl = TextEditingController(text: s.relayUrl);
-    _tokenCtrl = TextEditingController(text: s.token);
     _autoReconnect = s.autoReconnect;
-    _urlCtrl.addListener(_onChanged);
-    _tokenCtrl.addListener(_onChanged);
   }
 
-  void _onChanged() => setState(() => _dirty = true);
+  void _showProfileDialog({MachineProfile? existing}) {
+    final isEdit = existing != null;
+    final nameCtrl = TextEditingController(text: existing?.name ?? '');
+    final urlCtrl = TextEditingController(text: existing?.relayUrl ?? '');
+    final tokenCtrl = TextEditingController(text: existing?.token ?? '');
+    bool tokenObscured = true;
 
-  @override
-  void dispose() {
-    _urlCtrl.dispose();
-    _tokenCtrl.dispose();
-    super.dispose();
-  }
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          backgroundColor: const Color(0xFF0F1629),
+          title: Text(isEdit ? 'Edit Machine Profile' : 'Add Machine Profile', style: const TextStyle(color: Colors.white)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Machine Name',
+                    labelStyle: TextStyle(color: Color(0xFF8892A4)),
+                    enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF1A2340))),
+                    focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF00BFA5))),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: urlCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Relay URL',
+                    labelStyle: TextStyle(color: Color(0xFF8892A4)),
+                    hintText: 'wss://...',
+                    hintStyle: TextStyle(color: Color(0xFF4A5568)),
+                    enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF1A2340))),
+                    focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF00BFA5))),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: tokenCtrl,
+                  obscureText: tokenObscured,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'Auth Token',
+                    labelStyle: const TextStyle(color: Color(0xFF8892A4)),
+                    enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF1A2340))),
+                    focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF00BFA5))),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        tokenObscured ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                        size: 18,
+                        color: const Color(0xFF8892A4),
+                      ),
+                      onPressed: () => setDialogState(() => tokenObscured = !tokenObscured),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel', style: TextStyle(color: Color(0xFF8892A4))),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00BFA5)),
+              onPressed: () async {
+                final name = nameCtrl.text.trim();
+                final url = urlCtrl.text.trim();
+                final token = tokenCtrl.text.trim();
 
-  Future<void> _save() async {
-    final s = context.read<SettingsService>();
-    await s.setRelayUrl(_urlCtrl.text.trim());
-    await s.setToken(_tokenCtrl.text.trim());
-    await s.setAutoReconnect(_autoReconnect);
-    setState(() => _dirty = false);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Settings saved'),
-          backgroundColor: const Color(0xFF00BFA5),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                if (name.isNotEmpty && url.isNotEmpty && token.isNotEmpty) {
+                  Navigator.pop(ctx);
+                  final settings = context.read<SettingsService>();
+                  final list = List<MachineProfile>.from(settings.profiles);
+
+                  if (isEdit) {
+                    final idx = list.indexWhere((p) => p.id == existing.id);
+                    if (idx != -1) {
+                      list[idx] = existing.copyWith(name: name, relayUrl: url, token: token);
+                    }
+                  } else {
+                    final newProfile = MachineProfile(
+                      id: const Uuid().v4(),
+                      name: name,
+                      relayUrl: url,
+                      token: token,
+                    );
+                    list.add(newProfile);
+                  }
+
+                  await settings.saveProfiles(list);
+                  _showSnackBar('Profile saved');
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
         ),
-      );
+      ),
+    );
+  }
+
+  Future<void> _deleteProfile(MachineProfile profile) async {
+    final settings = context.read<SettingsService>();
+    if (settings.profiles.length <= 1) {
+      _showSnackBar('Cannot delete the only remaining profile.');
+      return;
     }
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0F1629),
+        title: const Text('Delete Profile', style: TextStyle(color: Colors.white)),
+        content: Text('Are you sure you want to delete "${profile.name}"?', style: const TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: Color(0xFF8892A4))),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      final list = List<MachineProfile>.from(settings.profiles);
+      list.removeWhere((p) => p.id == profile.id);
+      await settings.saveProfiles(list);
+
+      // If we deleted the active profile, reset selectedProfileId to the first one
+      if (settings.selectedProfileId == profile.id) {
+        await settings.setSelectedProfileId(list.first.id);
+      }
+      _showSnackBar('Profile deleted');
+    }
+  }
+
+  void _showSnackBar(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: const Color(0xFF00BFA5),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final settings = context.watch<SettingsService>();
+
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // ── Relay connection ────────────────────────────────────────────
+          // ── Machine Profiles Section ─────────────────────────────────────
           _Section(
-            title: 'Relay Server',
-            icon: Icons.cloud_outlined,
+            title: 'Machine Profiles',
+            icon: Icons.computer_outlined,
             children: [
-              _SettingsField(
-                controller: _urlCtrl,
-                label: 'Relay URL',
-                hint: 'ws://your-relay.railway.app or wss://...',
-                icon: Icons.link,
-                helperText: 'Use wss:// for production (Railway auto-provides HTTPS)',
-              ),
-              const SizedBox(height: 12),
-              _SettingsField(
-                controller: _tokenCtrl,
-                label: 'Auth Token',
-                hint: 'your-secret-token',
-                icon: Icons.vpn_key_outlined,
-                obscureText: _tokenObscured,
-                suffix: IconButton(
-                  icon: Icon(_tokenObscured ? Icons.visibility_outlined : Icons.visibility_off_outlined,
-                      size: 18, color: const Color(0xFF8892A4)),
-                  onPressed: () => setState(() => _tokenObscured = !_tokenObscured),
+              ...settings.profiles.map((profile) {
+                final isActive = settings.selectedProfileId == profile.id;
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0A0E1A),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: isActive ? const Color(0xFF00BFA5).withValues(alpha: 0.5) : const Color(0xFF2A3450),
+                      width: isActive ? 1.5 : 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.circle,
+                        size: 10,
+                        color: isActive ? const Color(0xFF00BFA5) : const Color(0xFF4A5568),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              profile.name,
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              profile.relayUrl,
+                              style: const TextStyle(color: Color(0xFF8892A4), fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.edit_outlined, size: 18, color: Color(0xFF00BFA5)),
+                        onPressed: () => _showProfileDialog(existing: profile),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
+                        onPressed: () => _deleteProfile(profile),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () => _showProfileDialog(),
+                icon: const Icon(Icons.add),
+                label: const Text('Add Machine Profile'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF00BFA5),
+                  side: const BorderSide(color: Color(0xFF00BFA5)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  minimumSize: const Size(double.infinity, 44),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
-                helperText: 'Must match AUTH_TOKEN on the relay server and agent',
               ),
             ],
           ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.05, end: 0),
@@ -101,7 +269,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 label: 'Auto-reconnect',
                 subtitle: 'Automatically reconnect on connection loss',
                 value: _autoReconnect,
-                onChanged: (v) => setState(() { _autoReconnect = v; _dirty = true; }),
+                onChanged: (v) async {
+                  setState(() => _autoReconnect = v);
+                  await settings.setAutoReconnect(v);
+                },
               ),
             ],
           ).animate().fadeIn(duration: 400.ms, delay: 80.ms).slideY(begin: 0.05, end: 0),
@@ -117,27 +288,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _InfoRow(label: 'Start agent', value: 'dart run bin/agent.dart --relay <url> --token <token>'),
               _InfoRow(label: 'Compile agent', value: 'dart compile exe bin/agent.dart -o agent.exe'),
             ],
-          ),
-
-          const SizedBox(height: 24),
-
-          // ── Save button ──────────────────────────────────────────────────
-          AnimatedOpacity(
-            opacity: _dirty ? 1.0 : 0.4,
-            duration: const Duration(milliseconds: 200),
-            child: ElevatedButton.icon(
-              onPressed: _dirty ? _save : null,
-              icon: const Icon(Icons.save_outlined),
-              label: const Text('Save Settings', style: TextStyle(fontWeight: FontWeight.w700)),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF00BFA5),
-                foregroundColor: Colors.black,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                minimumSize: const Size(double.infinity, 50),
-                elevation: 0,
-              ),
-            ),
           ),
 
           const SizedBox(height: 40),
@@ -180,53 +330,6 @@ class _Section extends StatelessWidget {
             const Divider(color: Color(0xFF2A3450), height: 1),
             Padding(padding: const EdgeInsets.all(16), child: Column(children: children)),
           ],
-        ),
-      );
-}
-
-class _SettingsField extends StatelessWidget {
-  final TextEditingController controller;
-  final String label;
-  final String hint;
-  final IconData icon;
-  final bool obscureText;
-  final Widget? suffix;
-  final String? helperText;
-
-  const _SettingsField({
-    required this.controller,
-    required this.label,
-    required this.hint,
-    required this.icon,
-    this.obscureText = false,
-    this.suffix,
-    this.helperText,
-  });
-
-  @override
-  Widget build(BuildContext context) => TextField(
-        controller: controller,
-        obscureText: obscureText,
-        style: const TextStyle(color: Colors.white, fontSize: 13),
-        decoration: InputDecoration(
-          labelText: label,
-          hintText: hint,
-          helperText: helperText,
-          helperStyle: const TextStyle(color: Color(0xFF5A6480), fontSize: 11),
-          helperMaxLines: 2,
-          prefixIcon: Icon(icon, size: 17, color: const Color(0xFF00BFA5)),
-          suffixIcon: suffix,
-          labelStyle: const TextStyle(color: Color(0xFF8892A4), fontSize: 13),
-          hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.2), fontSize: 12),
-          filled: true,
-          fillColor: const Color(0xFF0A0E1A),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
-              borderSide: const BorderSide(color: Color(0xFF2A3450))),
-          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
-              borderSide: const BorderSide(color: Color(0xFF2A3450))),
-          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
-              borderSide: const BorderSide(color: Color(0xFF00BFA5), width: 1.5)),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         ),
       );
 }

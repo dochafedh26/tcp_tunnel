@@ -6,6 +6,7 @@ import 'models/tunnel_config.dart';
 import 'services/settings_service.dart';
 import 'services/tunnel_service.dart';
 import 'screens/home_screen.dart';
+import 'screens/file_explorer_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/logs_screen.dart';
 
@@ -16,17 +17,21 @@ void main() async {
   await settings.init();
 
   final tunnel = TunnelService();
-  // Restore persisted tunnels
+  // Restore persisted tunnels for the selected profile
   final raw = settings.rawTunnels;
   if (raw.isNotEmpty) {
-    tunnel.setTunnels(raw.map(TunnelConfig.fromJson).toList());
+    final filtered = raw
+        .map(TunnelConfig.fromJson)
+        .where((t) => t.profileId == settings.selectedProfileId)
+        .toList();
+    tunnel.setTunnels(filtered);
   }
 
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: tunnel),
-        Provider.value(value: settings),
+        ChangeNotifierProvider.value(value: settings),
       ],
       child: const TcpTunnelApp(),
     ),
@@ -89,6 +94,7 @@ class _ShellState extends State<_Shell> {
 
   static const _screens = [
     HomeScreen(),
+    FileExplorerScreen(),
     LogsScreen(),
     SettingsScreen(),
   ];
@@ -152,11 +158,15 @@ class _ShellState extends State<_Shell> {
               label: 'Tunnels',
             ),
             BottomNavigationBarItem(
-              icon: _NavIcon(icon: Icons.receipt_long_outlined, active: _tabIndex == 1),
+              icon: _NavIcon(icon: Icons.folder_open_outlined, active: _tabIndex == 1),
+              label: 'Files',
+            ),
+            BottomNavigationBarItem(
+              icon: _NavIcon(icon: Icons.receipt_long_outlined, active: _tabIndex == 2),
               label: 'Logs',
             ),
             BottomNavigationBarItem(
-              icon: _NavIcon(icon: Icons.settings_outlined, active: _tabIndex == 2),
+              icon: _NavIcon(icon: Icons.settings_outlined, active: _tabIndex == 3),
               label: 'Settings',
             ),
           ],

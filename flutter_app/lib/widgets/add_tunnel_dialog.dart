@@ -6,8 +6,9 @@ import '../../models/tunnel_config.dart';
 /// Dialog to add or edit a tunnel forwarding rule.
 class AddTunnelDialog extends StatefulWidget {
   final TunnelConfig? existing;
+  final String defaultProfileId;
 
-  const AddTunnelDialog({super.key, this.existing});
+  const AddTunnelDialog({super.key, this.existing, required this.defaultProfileId});
 
   @override
   State<AddTunnelDialog> createState() => _AddTunnelDialogState();
@@ -45,6 +46,7 @@ class _AddTunnelDialogState extends State<AddTunnelDialog> {
     if (!_formKey.currentState!.validate()) return;
     final config = TunnelConfig(
       id: widget.existing?.id ?? const Uuid().v4(),
+      profileId: widget.existing?.profileId ?? widget.defaultProfileId,
       name: _nameCtrl.text.trim(),
       localPort: int.parse(_localPortCtrl.text.trim()),
       remoteHost: _remoteHostCtrl.text.trim(),

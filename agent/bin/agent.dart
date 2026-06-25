@@ -24,13 +24,19 @@ void main(List<String> arguments) async {
       'relay',
       abbr: 'r',
       help: 'Relay server WebSocket URL (ws:// or wss://)',
-      defaultsTo: 'ws://localhost:8080',
+      defaultsTo: 'wss://tcptunnel-production.up.railway.app',
     )
     ..addOption(
       'token',
       abbr: 't',
       help: 'Authentication token — must match relay server AUTH_TOKEN',
       defaultsTo: 'changeme',
+    )
+    ..addOption(
+      'shared-dir',
+      abbr: 's',
+      help: 'Directory exposed to remote file explorer requests',
+      defaultsTo: '',
     )
     ..addFlag('help', abbr: 'h', negatable: false, help: 'Show this help');
 
@@ -47,7 +53,7 @@ void main(List<String> arguments) async {
     stdout.writeln('TCP Tunnel Agent v1.0.0');
     stdout.writeln('═══════════════════════════════════════════════════');
     stdout.writeln('Runs on your WORK machine. Connects OUT to the relay');
-    stdout.writeln('server (port 443/wss or 8080/ws) and forwards TCP');
+    stdout.writeln('server (port 443/wss) and forwards TCP');
     stdout.writeln('traffic to internal work resources on behalf of the');
     stdout.writeln('Flutter client app running at home.');
     stdout.writeln('');
@@ -60,6 +66,8 @@ void main(List<String> arguments) async {
 
   final relayUrl = args['relay'] as String;
   final token = args['token'] as String;
+  final sharedDirArg = args['shared-dir'] as String;
+  final sharedDir = sharedDirArg.isEmpty ? Directory.current.path : sharedDirArg;
 
   // ── Banner ────────────────────────────────────────────────────────────────
   stdout.writeln('╔══════════════════════════════════════════╗');
@@ -67,12 +75,17 @@ void main(List<String> arguments) async {
   stdout.writeln('╚══════════════════════════════════════════╝');
   stdout.writeln('  Relay  : $relayUrl');
   stdout.writeln('  Token  : ${token.length > 3 ? "${token.substring(0, 3)}***" : "***"}');
+  stdout.writeln('  Shared : $sharedDir');
   stdout.writeln('');
   stdout.writeln('Press Ctrl+C to stop.');
   stdout.writeln('');
 
   // ── Start agent ───────────────────────────────────────────────────────────
-  final agent = AgentService(relayUrl: relayUrl, token: token);
+  final agent = AgentService(
+    relayUrl: relayUrl,
+    token: token,
+    sharedDir: sharedDir,
+  );
 
   // Graceful shutdown on Ctrl+C
   ProcessSignal.sigint.watch().listen((_) async {

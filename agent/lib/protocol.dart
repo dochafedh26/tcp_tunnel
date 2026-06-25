@@ -38,6 +38,36 @@ class Protocol {
   static String pingMessage() => jsonEncode({'type': 'ping'});
   static String pongMessage() => jsonEncode({'type': 'pong'});
 
+  static String fileListResponse(String requestId, String path, bool success, List<Map<String, dynamic>> items, {String? error}) =>
+      jsonEncode({
+        'type': 'file_list_response',
+        'requestId': requestId,
+        'path': path,
+        'success': success,
+        'items': items,
+        'error': error,
+      });
+
+  static String fileDownloadChunk(String requestId, int chunkIndex, String base64Data, bool isLast) =>
+      jsonEncode({
+        'type': 'file_download_chunk',
+        'requestId': requestId,
+        'chunkIndex': chunkIndex,
+        'data': base64Data,
+        'isLast': isLast,
+      });
+
+  static String fileUploadResponse(String requestId, bool success, {String? error}) =>
+      jsonEncode({
+        'type': 'file_upload_response',
+        'requestId': requestId,
+        'success': success,
+        'error': error,
+      });
+
+  static String fileError(String requestId, String message) =>
+      jsonEncode({'type': 'file_error', 'requestId': requestId, 'message': message});
+
   // ── Binary frame codec ────────────────────────────────────────────────────
 
   /// Encode a [data] payload into a binary data frame for [channelId].

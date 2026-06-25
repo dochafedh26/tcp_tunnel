@@ -49,3 +49,5 @@ Thumbs.db
 *.dll
 *.so
 *.dylib
+agent/agent
+relay_server.zip

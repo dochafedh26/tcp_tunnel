@@ -40,6 +40,12 @@ class TunnelService extends ChangeNotifier {
   /// Pending channels waiting for relay 'opened' confirmation
   final Set<String> _pendingChannels = {};
 
+  // ── File Explorer State ────────────────────────────────────────────────────
+  final Map<String, Completer<List<Map<String, dynamic>>>> _fileListCompleters = {};
+  final Map<String, _ActiveFileDownload> _activeDownloads = {};
+  final Map<String, Completer<void>> _activeUploadCompleters = {};
+  final Map<String, Completer<bool>> _fileActionCompleters = {};
+
   // ── Stats ──────────────────────────────────────────────────────────────────
   int _bytesIn = 0;
   int _bytesOut = 0;
@@ -202,6 +208,82 @@ class TunnelService extends ChangeNotifier {
 
       case 'ping':
         _send(jsonEncode({'type': 'pong'}));
+
+      case 'file_list_response':
+        final requestId = msg['requestId'] as String;
+        final success = msg['success'] as bool;
+        final error = msg['error'] as String?;
+        final items = List<Map<String, dynamic>>.from(msg['items'] as List? ?? []);
+        final completer = _fileListCompleters.remove(requestId);
+        if (completer != null) {
+          if (success) {
+            completer.complete(items);
+          } else {
+            completer.completeError(Exception(error ?? 'Failed to list files'));
+          }
+        }
+
+      case 'file_download_chunk':
+        final requestId = msg['requestId'] as String;
+        final base64Data = msg['data'] as String;
+        final isLast = msg['isLast'] as bool;
+        final download = _activeDownloads[requestId];
+        if (download != null) {
+          try {
+            final bytes = base64Decode(base64Data);
+            download.sink.add(bytes);
+            download.bytesReceived += bytes.length;
+            if (download.onProgress != null) {
+              download.onProgress!(download.bytesReceived.toDouble());
+            }
+            if (isLast) {
+              _activeDownloads.remove(requestId);
+              download.sink.close().then((_) {
+                download.completer.complete();
+              });
+            }
+          } catch (e) {
+            _activeDownloads.remove(requestId);
+            download.sink.close().then((_) {
+              download.completer.completeError(e);
+            });
+          }
+        }
+
+      case 'file_upload_response':
+        final requestId = msg['requestId'] as String;
+        final success = msg['success'] as bool;
+        final error = msg['error'] as String?;
+        final uploadCompleter = _activeUploadCompleters.remove(requestId);
+        if (uploadCompleter != null) {
+          if (success) {
+            uploadCompleter.complete();
+          } else {
+            uploadCompleter.completeError(Exception(error ?? 'Upload failed'));
+          }
+        }
+        final actionCompleter = _fileActionCompleters.remove(requestId);
+        if (actionCompleter != null) {
+          actionCompleter.complete(success);
+        }
+
+      case 'file_error':
+        final requestId = msg['requestId'] as String;
+        final message = msg['message'] as String;
+        final download = _activeDownloads.remove(requestId);
+        if (download != null) {
+          download.sink.close().then((_) {
+            download.completer.completeError(Exception(message));
+          });
+        }
+        final uploadCompleter = _activeUploadCompleters.remove(requestId);
+        if (uploadCompleter != null) {
+          uploadCompleter.completeError(Exception(message));
+        }
+        final fileListCompleter = _fileListCompleters.remove(requestId);
+        if (fileListCompleter != null) {
+          fileListCompleter.completeError(Exception(message));
+        }
     }
   }
 
@@ -328,6 +410,25 @@ class TunnelService extends ChangeNotifier {
     _localSockets.clear();
     _pendingChannels.clear();
     _peerConnected = false;
+
+    // Clean up file explorer state
+    for (final download in _activeDownloads.values) {
+      download.sink.close().catchError((_) => null);
+      download.completer.completeError(Exception('Disconnected'));
+    }
+    _activeDownloads.clear();
+    for (final completer in _fileListCompleters.values) {
+      completer.completeError(Exception('Disconnected'));
+    }
+    _fileListCompleters.clear();
+    for (final completer in _activeUploadCompleters.values) {
+      completer.completeError(Exception('Disconnected'));
+    }
+    _activeUploadCompleters.clear();
+    for (final completer in _fileActionCompleters.values) {
+      completer.completeError(Exception('Disconnected'));
+    }
+    _fileActionCompleters.clear();
   }
 
   void _log(LogLevel level, String message) {
@@ -341,9 +442,160 @@ class TunnelService extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ── Remote File Operations ──────────────────────────────────────────────────
+
+  Future<List<Map<String, dynamic>>> fetchRemoteFiles(String path) async {
+    if (!isConnected) throw Exception('Not connected to relay');
+    final requestId = _uuid.v4();
+    final completer = Completer<List<Map<String, dynamic>>>();
+    _fileListCompleters[requestId] = completer;
+
+    _send(jsonEncode({
+      'type': 'file_list_request',
+      'requestId': requestId,
+      'path': path,
+    }));
+
+    return completer.future;
+  }
+
+  Future<void> createRemoteDirectory(String remotePath) async {
+    if (!isConnected) throw Exception('Not connected to relay');
+    final requestId = _uuid.v4();
+    final completer = Completer<bool>();
+    _fileActionCompleters[requestId] = completer;
+
+    _send(jsonEncode({
+      'type': 'file_create_dir_request',
+      'requestId': requestId,
+      'path': remotePath,
+    }));
+
+    final success = await completer.future;
+    if (!success) throw Exception('Failed to create remote directory');
+  }
+
+  Future<void> deleteRemoteEntity(String remotePath) async {
+    if (!isConnected) throw Exception('Not connected to relay');
+    final requestId = _uuid.v4();
+    final completer = Completer<bool>();
+    _fileActionCompleters[requestId] = completer;
+
+    _send(jsonEncode({
+      'type': 'file_delete_request',
+      'requestId': requestId,
+      'path': remotePath,
+    }));
+
+    final success = await completer.future;
+    if (!success) throw Exception('Failed to delete remote item');
+  }
+
+  Future<void> downloadRemoteFile(String remotePath, String localSavePath, {Function(double)? onProgress}) async {
+    if (!isConnected) throw Exception('Not connected to relay');
+    final requestId = _uuid.v4();
+    final completer = Completer<void>();
+
+    final file = File(localSavePath);
+    await file.parent.create(recursive: true);
+    final sink = file.openWrite();
+
+    _activeDownloads[requestId] = _ActiveFileDownload(
+      remotePath: remotePath,
+      localSavePath: localSavePath,
+      sink: sink,
+      completer: completer,
+      onProgress: onProgress,
+    );
+
+    _send(jsonEncode({
+      'type': 'file_download_request',
+      'requestId': requestId,
+      'path': remotePath,
+    }));
+
+    try {
+      await completer.future;
+    } catch (e) {
+      await sink.close();
+      try {
+        await file.delete();
+      } catch (_) {}
+      rethrow;
+    }
+  }
+
+  Future<void> uploadLocalFile(String localPath, String remoteDestPath, {Function(double)? onProgress}) async {
+    if (!isConnected) throw Exception('Not connected to relay');
+    final file = File(localPath);
+    if (!file.existsSync()) throw Exception('Local file does not exist');
+
+    final requestId = _uuid.v4();
+    final completer = Completer<void>();
+    _activeUploadCompleters[requestId] = completer;
+
+    final fileLength = await file.length();
+    final openFile = await file.open();
+
+    try {
+      const chunkSize = 64 * 1024;
+      int bytesSent = 0;
+      int chunkIndex = 0;
+
+      while (bytesSent < fileLength) {
+        final remaining = fileLength - bytesSent;
+        final toRead = remaining < chunkSize ? remaining : chunkSize;
+        final chunk = await openFile.read(toRead);
+        bytesSent += toRead;
+
+        final isLast = bytesSent >= fileLength;
+        final base64Data = base64Encode(chunk);
+
+        _send(jsonEncode({
+          'type': 'file_upload_chunk',
+          'requestId': requestId,
+          'path': remoteDestPath,
+          'chunkIndex': chunkIndex++,
+          'data': base64Data,
+          'isLast': isLast,
+        }));
+
+        if (onProgress != null && fileLength > 0) {
+          onProgress(bytesSent / fileLength);
+        }
+
+        await Future.delayed(const Duration(milliseconds: 5));
+      }
+
+      await completer.future;
+    } catch (e) {
+      rethrow;
+    } finally {
+      await openFile.close();
+      _activeUploadCompleters.remove(requestId);
+    }
+  }
+
   @override
   void dispose() {
     _cleanup();
     super.dispose();
   }
+}
+
+class _ActiveFileDownload {
+  final String remotePath;
+  final String localSavePath;
+  final IOSink sink;
+  final Completer<void> completer;
+  final Function(double)? onProgress;
+  int bytesReceived = 0;
+
+  _ActiveFileDownload({
+    required this.remotePath,
+    required this.localSavePath,
+    required this.sink,
+    required this.completer,
+    this.onProgress,
+  });
 }

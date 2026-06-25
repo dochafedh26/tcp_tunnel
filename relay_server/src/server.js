@@ -74,7 +74,8 @@ wss.on('connection', (ws, req) => {
       return;
     }
 
-    if (msg.token !== AUTH_TOKEN) {
+    const validTokens = AUTH_TOKEN.split(',').map(t => t.trim());
+    if (!validTokens.includes(msg.token)) {
       logger.warn(`Invalid token from ${clientIp}`);
       ws.send(JSON.stringify({ type: 'auth_error', message: 'Invalid token' }));
       ws.terminate();

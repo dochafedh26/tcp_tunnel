@@ -1,0 +1,12 @@
+<service>
+  <id>tcp-tunnel-agent</id>
+  <name>TCP Tunnel Agent</name>
+  <description>Relays TCP connections through the remote WebSocket tunnel</description>
+  <executable>C:\tcp_tunnel_agent\agent.exe</executable> <!-- Path to your agent.exe -->
+  <arguments>--relay wss://tcptunnel-production.up.railway.app --token my-secure-tunnel-token-2026</arguments>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold> <!-- 10 MB -->
+    <keepFiles>5</keepFiles>
+  </log>
+  <onfailure action="restart" delay="10 sec"/>
+</service>

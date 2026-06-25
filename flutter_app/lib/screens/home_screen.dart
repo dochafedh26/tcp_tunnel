@@ -29,19 +29,35 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     super.dispose();
   }
 
+  Future<void> _switchProfile(TunnelService svc, SettingsService settings, String profileId) async {
+    if (svc.isConnected) {
+      await svc.disconnect();
+    }
+    await settings.setSelectedProfileId(profileId);
+    
+    // Load and set tunnels for this profile
+    final all = settings.rawTunnels.map(TunnelConfig.fromJson).toList();
+    final filtered = all.where((t) => t.profileId == profileId).toList();
+    svc.setTunnels(filtered);
+    
+    setState(() {});
+  }
+
   Future<void> _toggleConnection(TunnelService svc, SettingsService settings) async {
     if (svc.isConnected) {
       await svc.disconnect();
     } else {
-      await svc.connect(settings.relayUrl, settings.token);
+      final p = settings.selectedProfile;
+      await svc.connect(p.relayUrl, p.token);
     }
   }
 
   Future<void> _showAddDialog(TunnelService svc, SettingsService settings, {TunnelConfig? existing}) async {
+    final currentProfileId = settings.selectedProfileId;
     final result = await showDialog<TunnelConfig>(
       context: context,
       barrierColor: Colors.black.withValues(alpha: 0.7),
-      builder: (_) => AddTunnelDialog(existing: existing),
+      builder: (_) => AddTunnelDialog(existing: existing, defaultProfileId: currentProfileId),
     );
     if (result == null) return;
     if (existing != null) {
@@ -49,8 +65,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     } else {
       svc.addTunnel(result);
     }
-    // Persist tunnels
-    await settings.saveTunnels(svc.tunnels.map((t) => t.toJson()).toList());
+    // Persist tunnels for this profile
+    await settings.saveTunnelsForProfile(currentProfileId, svc.tunnels);
   }
 
   Future<void> _deleteTunnel(TunnelService svc, SettingsService settings, TunnelConfig config) async {
@@ -74,7 +90,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     );
     if (confirm == true) {
       svc.removeTunnel(config.id);
-      await settings.saveTunnels(svc.tunnels.map((t) => t.toJson()).toList());
+      await settings.saveTunnelsForProfile(settings.selectedProfileId, svc.tunnels);
     }
   }
 
@@ -87,6 +103,47 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       backgroundColor: Colors.transparent,
       body: Column(
         children: [
+          // ── Profile Selector Card ─────────────────────────────────────
+          Container(
+            margin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0F1629),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFF1A2340)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.computer_outlined, color: Color(0xFF00BFA5), size: 20),
+                const SizedBox(width: 12),
+                const Text('Active Machine:', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w500)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      dropdownColor: const Color(0xFF0F1629),
+                      value: settings.selectedProfileId,
+                      icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF00BFA5)),
+                      items: settings.profiles.map((p) {
+                        return DropdownMenuItem<String>(
+                          value: p.id,
+                          child: Text(p.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                        );
+                      }).toList(),
+                      onChanged: svc.isConnected
+                          ? null // Disable switching if active tunnel is running (forces disconnection)
+                          : (val) {
+                              if (val != null) {
+                                _switchProfile(svc, settings, val);
+                              }
+                            },
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ).animate().fadeIn(duration: 350.ms).slideY(begin: -0.05, end: 0),
+
           // ── Connection header card ────────────────────────────────────
           _ConnectionHeader(
             svc: svc,
@@ -112,7 +169,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                         onDelete: () => _deleteTunnel(svc, settings, config),
                         onToggle: (v) async {
                           svc.updateTunnel(config.copyWith(enabled: v));
-                          await settings.saveTunnels(svc.tunnels.map((t) => t.toJson()).toList());
+                          await settings.saveTunnelsForProfile(settings.selectedProfileId, svc.tunnels);
                         },
                       ).animate().fadeIn(duration: 300.ms, delay: (i * 60).ms).slideX(begin: 0.05, end: 0);
                     },

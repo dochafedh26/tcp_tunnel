@@ -7,6 +7,7 @@ import 'package:logging/logging.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'file_manager.dart';
 import 'protocol.dart';
 
 /// Manages the agent's WebSocket connection to the relay server and
@@ -14,11 +15,13 @@ import 'protocol.dart';
 class AgentService {
   final String relayUrl;
   final String token;
+  final String sharedDir;
 
   final Logger _log = Logger('AgentService');
 
   WebSocketChannel? _channel;
   bool _running = false;
+  late final FileManager _fileManager;
 
   /// Active TCP sockets keyed by channelId.
   final Map<String, Socket> _sockets = {};
@@ -31,7 +34,10 @@ class AgentService {
   int bytesSent = 0;
   int get activeChannels => _sockets.length;
 
-  AgentService({required this.relayUrl, required this.token});
+  AgentService({required this.relayUrl, required this.token, String? sharedDir})
+      : sharedDir = sharedDir ?? Directory.current.path {
+    _fileManager = FileManager(this.sharedDir);
+  }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -136,8 +142,86 @@ class AgentService {
         _log.severe('Authentication rejected by relay: ${msg['message']}');
         stop();
 
+      case 'file_list_request':
+        final requestId = msg['requestId'] as String;
+        final path = msg['path'] as String? ?? '';
+        try {
+          final items = _fileManager.listDirectory(path);
+          _channel?.sink.add(Protocol.fileListResponse(requestId, path, true, items));
+        } catch (e) {
+          _channel?.sink.add(Protocol.fileListResponse(requestId, path, false, [], error: e.toString()));
+        }
+
+      case 'file_download_request':
+        final requestId = msg['requestId'] as String;
+        final path = msg['path'] as String;
+        _handleFileDownload(requestId, path);
+
+      case 'file_upload_chunk':
+        final requestId = msg['requestId'] as String;
+        final path = msg['path'] as String;
+        final chunkIndex = msg['chunkIndex'] as int;
+        final base64Data = msg['data'] as String;
+        final isLast = msg['isLast'] as bool;
+        _handleFileUploadChunk(requestId, path, chunkIndex, base64Data, isLast);
+
+      case 'file_create_dir_request':
+        final requestId = msg['requestId'] as String;
+        final path = msg['path'] as String;
+        try {
+          _fileManager.createDirectory(path);
+          _channel?.sink.add(Protocol.fileUploadResponse(requestId, true));
+        } catch (e) {
+          _channel?.sink.add(Protocol.fileUploadResponse(requestId, false, error: e.toString()));
+        }
+
+      case 'file_delete_request':
+        final requestId = msg['requestId'] as String;
+        final path = msg['path'] as String;
+        try {
+          _fileManager.deleteEntity(path);
+          _channel?.sink.add(Protocol.fileUploadResponse(requestId, true));
+        } catch (e) {
+          _channel?.sink.add(Protocol.fileUploadResponse(requestId, false, error: e.toString()));
+        }
+
       default:
         _log.fine('Unhandled message type: $type');
+    }
+  }
+
+  Future<void> _handleFileDownload(String requestId, String path) async {
+    try {
+      List<int>? prevChunk;
+      int chunkIndex = 0;
+      await for (final chunk in _fileManager.readFile(path)) {
+        if (prevChunk != null) {
+          final base64Data = base64Encode(prevChunk);
+          _channel?.sink.add(Protocol.fileDownloadChunk(requestId, chunkIndex++, base64Data, false));
+        }
+        prevChunk = chunk;
+      }
+      if (prevChunk != null) {
+        final base64Data = base64Encode(prevChunk);
+        _channel?.sink.add(Protocol.fileDownloadChunk(requestId, chunkIndex, base64Data, true));
+      } else {
+        _channel?.sink.add(Protocol.fileDownloadChunk(requestId, 0, '', true));
+      }
+    } catch (e) {
+      _channel?.sink.add(Protocol.fileError(requestId, e.toString()));
+    }
+  }
+
+  Future<void> _handleFileUploadChunk(String requestId, String path, int chunkIndex, String base64Data, bool isLast) async {
+    try {
+      final chunk = base64Decode(base64Data);
+      await _fileManager.writeFileChunk(requestId, path, chunk, isLast);
+      if (isLast) {
+        _channel?.sink.add(Protocol.fileUploadResponse(requestId, true));
+      }
+    } catch (e) {
+      _fileManager.cancelWrite(requestId);
+      _channel?.sink.add(Protocol.fileUploadResponse(requestId, false, error: e.toString()));
     }
   }
 

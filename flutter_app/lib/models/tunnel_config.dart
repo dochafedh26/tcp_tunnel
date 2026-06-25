@@ -4,6 +4,7 @@ import 'dart:convert';
 /// localPort on the home machine → remoteHost:remotePort on the work network.
 class TunnelConfig {
   final String id;
+  final String profileId;
   final String name;
   final int localPort;
   final String remoteHost;
@@ -12,6 +13,7 @@ class TunnelConfig {
 
   const TunnelConfig({
     required this.id,
+    required this.profileId,
     required this.name,
     required this.localPort,
     required this.remoteHost,
@@ -21,6 +23,7 @@ class TunnelConfig {
 
   TunnelConfig copyWith({
     String? id,
+    String? profileId,
     String? name,
     int? localPort,
     String? remoteHost,
@@ -29,6 +32,7 @@ class TunnelConfig {
   }) {
     return TunnelConfig(
       id: id ?? this.id,
+      profileId: profileId ?? this.profileId,
       name: name ?? this.name,
       localPort: localPort ?? this.localPort,
       remoteHost: remoteHost ?? this.remoteHost,
@@ -39,6 +43,7 @@ class TunnelConfig {
 
   Map<String, dynamic> toJson() => {
         'id': id,
+        'profileId': profileId,
         'name': name,
         'localPort': localPort,
         'remoteHost': remoteHost,
@@ -48,6 +53,7 @@ class TunnelConfig {
 
   factory TunnelConfig.fromJson(Map<String, dynamic> json) => TunnelConfig(
         id: json['id'] as String,
+        profileId: json['profileId'] as String? ?? '',
         name: json['name'] as String,
         localPort: json['localPort'] as int,
         remoteHost: json['remoteHost'] as String,
@@ -65,5 +71,5 @@ class TunnelConfig {
   int get hashCode => id.hashCode;
 
   @override
-  String toString() => 'TunnelConfig($name: localhost:$localPort → $remoteHost:$remotePort)';
+  String toString() => 'TunnelConfig($name: localhost:$localPort → $remoteHost:$remotePort in profile $profileId)';
 }
