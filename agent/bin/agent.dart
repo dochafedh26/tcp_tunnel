@@ -72,7 +72,7 @@ void main(List<String> arguments) async {
 
   // ── Banner ────────────────────────────────────────────────────────────────
   stdout.writeln('╔══════════════════════════════════════════╗');
-  stdout.writeln('║       TCP Tunnel Agent  v1.0.0           ║');
+  stdout.writeln('║       TCP Tunnel Agent  v${AgentUpdater.currentVersion}           ║');
   stdout.writeln('╚══════════════════════════════════════════╝');
   stdout.writeln('  Relay  : $relayUrl');
   stdout.writeln('  Token  : ${token.length > 3 ? "${token.substring(0, 3)}***" : "***"}');

@@ -6,7 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:open_file/open_file.dart';
 
 class UpdaterService {
-  static const String currentVersion = '1.0.0';
+  static const String currentVersion = '1.0.6';
   static const String repoOwner = 'dochafedh26';
   static const String repoName = 'tcp_tunnel';
 
