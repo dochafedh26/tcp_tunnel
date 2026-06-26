@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
@@ -5,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'models/tunnel_config.dart';
 import 'services/settings_service.dart';
 import 'services/tunnel_service.dart';
+import 'services/updater_service.dart';
 import 'screens/home_screen.dart';
 import 'screens/file_explorer_screen.dart';
 import 'screens/settings_screen.dart';
@@ -91,6 +93,145 @@ class _Shell extends StatefulWidget {
 
 class _ShellState extends State<_Shell> {
   int _tabIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkForUpdates();
+    });
+  }
+
+  void _checkForUpdates() async {
+    final release = await UpdaterService.checkLatestRelease();
+    if (release == null || !mounted) return;
+
+    final String latestVersion = (release['tag_name'] as String).replaceFirst('v', '');
+    final String notes = release['body'] ?? 'No release notes provided.';
+    final assets = release['assets'] as List<dynamic>;
+
+    // Find update asset depending on platform (APK for Android, ZIP/EXE for Windows)
+    String targetExtension = Platform.isAndroid ? '.apk' : '.zip';
+    final asset = assets.firstWhere(
+      (a) => (a['name'] as String).endsWith(targetExtension),
+      orElse: () => null,
+    );
+
+    if (asset == null) return;
+    final String downloadUrl = asset['browser_download_url'];
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Text('Update Available (v$latestVersion)'),
+        backgroundColor: const Color(0xFF0F1629),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('A new version of TCP Tunnel is available. Would you like to update?'),
+            const SizedBox(height: 12),
+            const Text('Release Notes:', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            Container(
+              constraints: const BoxConstraints(maxHeight: 150),
+              width: double.maxFinite,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.black26,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: SingleChildScrollView(
+                child: Text(notes, style: const TextStyle(fontSize: 12, color: Colors.white70)),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Later'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              _downloadAndInstall(downloadUrl);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF00BFA5),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Update Now'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _downloadAndInstall(String url) {
+    double progress = 0.0;
+    StateSetter? dialogStateSetter;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF0F1629),
+          title: const Text('Downloading Update...'),
+          content: StatefulBuilder(
+            builder: (context, setState) {
+              dialogStateSetter = setState;
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  LinearProgressIndicator(
+                    value: progress,
+                    color: const Color(0xFF00BFA5),
+                    backgroundColor: Colors.white24,
+                  ),
+                  const SizedBox(height: 12),
+                  Text('${(progress * 100).toStringAsFixed(0)}%'),
+                ],
+              );
+            },
+          ),
+        );
+      },
+    );
+
+    UpdaterService.downloadAndInstallApk(
+      url,
+      (p) {
+        if (dialogStateSetter != null) {
+          dialogStateSetter!(() {
+            progress = p;
+          });
+        }
+      },
+      (error) {
+        Navigator.of(context).pop(); // Close download dialog
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            backgroundColor: const Color(0xFF0F1629),
+            title: const Text('Update Failed'),
+            content: Text(error),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      },
+      () {
+        Navigator.of(context).pop(); // Close download dialog
+      },
+    );
+  }
 
   static const _screens = [
     HomeScreen(),

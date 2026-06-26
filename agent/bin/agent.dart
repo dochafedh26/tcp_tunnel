@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:args/args.dart';
 import 'package:logging/logging.dart';
 import 'package:tcp_tunnel_agent/agent_service.dart';
+import 'package:tcp_tunnel_agent/updater.dart';
 
 void main(List<String> arguments) async {
   // ── Logging setup ─────────────────────────────────────────────────────────
@@ -79,6 +80,9 @@ void main(List<String> arguments) async {
   stdout.writeln('');
   stdout.writeln('Press Ctrl+C to stop.');
   stdout.writeln('');
+
+  // Check for updates before running the agent service
+  await AgentUpdater.checkForUpdates();
 
   // ── Start agent ───────────────────────────────────────────────────────────
   final agent = AgentService(

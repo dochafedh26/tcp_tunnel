@@ -1,0 +1,126 @@
+name: Compile & Create Release Assets
+
+on:
+  push:
+    tags:
+      - 'v*' # Triggers on v1.0.0, v1.1.0, etc.
+
+permissions:
+  contents: write
+
+jobs:
+  # ── BUILD THE DART AGENT ───────────────────────────────────────────────────
+  build-agent:
+    name: Build Agent (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            output-name: agent-linux
+          - os: windows-latest
+            output-name: agent-windows.exe
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Dart SDK
+        uses: dart-lang/setup-dart@v1
+
+      - name: Install dependencies
+        run: dart pub get
+        working-directory: ./agent
+
+      - name: Compile Executable
+        run: dart compile exe bin/agent.dart -o ${{ matrix.output-name }}
+        working-directory: ./agent
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.output-name }}
+          path: ./agent/${{ matrix.output-name }}
+
+  # ── BUILD THE FLUTTER APP ──────────────────────────────────────────────────
+  build-flutter:
+    name: Build Flutter Client (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        target: [android, windows]
+        include:
+          - target: android
+            os: ubuntu-latest
+            output-path: build/app/outputs/flutter-apk/app-release.apk
+            release-name: tcp_tunnel_app.apk
+          - target: windows
+            os: windows-latest
+            output-path: build/windows/x64/runner/Release
+            release-name: tcp_tunnel_app-windows.zip
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Java (for Android build)
+        if: matrix.target == 'android'
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Get Dependencies
+        run: flutter pub get
+        working-directory: ./flutter_app
+
+      - name: Build Android APK
+        if: matrix.target == 'android'
+        run: flutter build apk --release
+        working-directory: ./flutter_app
+
+      - name: Build Windows App
+        if: matrix.target == 'windows'
+        run: flutter build windows --release
+        working-directory: ./flutter_app
+
+      # Compress Windows build folder to .zip
+      - name: Package Windows Build
+        if: matrix.target == 'windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path ${{ matrix.output-path }}/* -DestinationPath ./flutter_app/tcp_tunnel_app-windows.zip
+        working-directory: ./flutter_app
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.release-name }}
+          path: |
+            ${{ matrix.target == 'android' && format('./flutter_app/{0}', matrix.output-path) || format('./flutter_app/{0}', matrix.release-name) }}
+
+  # ── CREATE GITHUB RELEASE & UPLOAD ASSETS ──────────────────────────────────
+  create-release:
+    name: Create GitHub Release
+    needs: [build-agent, build-flutter]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            agent-linux/agent-linux
+            agent-windows.exe/agent-windows.exe
+            tcp_tunnel_app.apk/app-release.apk
+            tcp_tunnel_app-windows.zip/tcp_tunnel_app-windows.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
