@@ -14,6 +14,7 @@ jobs:
     name: Build Agent (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
         include:
@@ -48,6 +49,7 @@ jobs:
     name: Build Flutter Client (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         target: [android, windows]
         include:
@@ -75,6 +77,10 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+
+      - name: Enable Windows Desktop Build
+        if: matrix.target == 'windows'
+        run: flutter config --enable-windows-desktop
 
       - name: Get Dependencies
         run: flutter pub get
