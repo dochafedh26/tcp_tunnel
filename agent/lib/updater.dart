@@ -7,13 +7,16 @@ class AgentUpdater {
   static const String repoName = 'tcp_tunnel';
 
   /// Checks for updates. If a new version exists, downloads and replaces the binary.
-  static Future<void> checkForUpdates() async {
+  static Future<void> checkForUpdates([String? githubToken]) async {
     final client = HttpClient();
     client.userAgent = 'TCP-Tunnel-Agent';
 
     try {
       final uri = Uri.parse('https://api.github.com/repos/$repoOwner/$repoName/releases/latest');
       final request = await client.getUrl(uri);
+      if (githubToken != null && githubToken.isNotEmpty) {
+        request.headers.add('Authorization', 'token $githubToken');
+      }
       final response = await request.close();
 
       if (response.statusCode != 200) {

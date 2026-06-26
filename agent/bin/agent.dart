@@ -36,6 +36,12 @@ void main(List<String> arguments) async {
       defaultsTo: 'changeme',
     )
     ..addOption(
+      'github-token',
+      abbr: 'g',
+      help: 'GitHub Personal Access Token for checking updates from private repository',
+      defaultsTo: '',
+    )
+    ..addOption(
       'shared-dir',
       abbr: 's',
       help: 'Directory exposed to remote file explorer requests',
@@ -67,31 +73,55 @@ void main(List<String> arguments) async {
     exit(0);
   }
 
+  final configFile = File('agent_settings.json');
+  Map<String, dynamic> configJson = {};
+  if (configFile.existsSync()) {
+    try {
+      final content = configFile.readAsStringSync();
+      configJson = jsonDecode(content) as Map<String, dynamic>;
+    } catch (e) {
+      stderr.writeln('Warning: Failed to read agent_settings.json: $e');
+    }
+  }
+
   final relayUrl = args['relay'] as String;
   var token = args['token'] as String;
 
   if (token == 'changeme') {
-    final configFile = File('agent_settings.json');
-    if (configFile.existsSync()) {
-      try {
-        final content = configFile.readAsStringSync();
-        final json = jsonDecode(content) as Map<String, dynamic>;
-        if (json.containsKey('token')) {
-          token = json['token'] as String;
-        }
-      } catch (e) {
-        stderr.writeln('Warning: Failed to read agent_settings.json: $e');
-      }
+    if (configJson.containsKey('token')) {
+      token = configJson['token'] as String;
     }
 
     if (token == 'changeme' || token.trim().isEmpty) {
       token = const Uuid().v4();
+      configJson['token'] = token;
       try {
-        configFile.writeAsStringSync(jsonEncode({'token': token}));
+        configFile.writeAsStringSync(jsonEncode(configJson));
         stdout.writeln('Generated new persistent token in agent_settings.json');
       } catch (e) {
         stderr.writeln('Warning: Failed to save agent_settings.json: $e');
       }
+    }
+  }
+
+  // Resolve GitHub Personal Access Token (PAT)
+  final cliGithubToken = args['github-token'] as String;
+  var githubToken = cliGithubToken.isNotEmpty
+      ? cliGithubToken
+      : (Platform.environment['GITHUB_TOKEN'] ?? Platform.environment['GH_TOKEN'] ?? '');
+
+  if (githubToken.isEmpty && configJson.containsKey('github_token')) {
+    githubToken = configJson['github_token'] as String;
+  }
+
+  // Persist GitHub token if provided via CLI and it differs from saved settings
+  if (cliGithubToken.isNotEmpty && cliGithubToken != configJson['github_token']) {
+    configJson['github_token'] = cliGithubToken;
+    try {
+      configFile.writeAsStringSync(jsonEncode(configJson));
+      stdout.writeln('Saved GitHub Personal Access Token to agent_settings.json');
+    } catch (e) {
+      stderr.writeln('Warning: Failed to save agent_settings.json: $e');
     }
   }
 
@@ -107,6 +137,14 @@ void main(List<String> arguments) async {
   stdout.writeln('  Agent Name : $hostname');
   stdout.writeln('  Auth Token : $token');
   stdout.writeln('  Shared Dir : $sharedDir');
+
+  final maskedGithubToken = githubToken.isNotEmpty
+      ? (githubToken.length > 8
+          ? '${githubToken.substring(0, 4)}...${githubToken.substring(githubToken.length - 4)}'
+          : '********')
+      : 'Not set';
+  stdout.writeln('  GitHub PAT : $maskedGithubToken');
+
   stdout.writeln('────────────────────────────────────────────────────────────────────');
   stdout.writeln('  👉 To connect from the Flutter app:');
   stdout.writeln('     1. Open Settings -> Add Machine Profile');
@@ -118,7 +156,7 @@ void main(List<String> arguments) async {
   stdout.writeln('');
 
   // Check for updates before running the agent service
-  await AgentUpdater.checkForUpdates();
+  await AgentUpdater.checkForUpdates(githubToken);
 
   // ── Start agent ───────────────────────────────────────────────────────────
   final agent = AgentService(
