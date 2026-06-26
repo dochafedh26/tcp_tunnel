@@ -101,7 +101,7 @@ jobs:
         if: matrix.target == 'windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path ${{ matrix.output-path }}/* -DestinationPath ./flutter_app/tcp_tunnel_app-windows.zip
+          Compress-Archive -Path ${{ matrix.output-path }}/* -DestinationPath tcp_tunnel_app-windows.zip
         working-directory: ./flutter_app
 
       - name: Upload Artifact
