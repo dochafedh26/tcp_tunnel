@@ -148,6 +148,27 @@ Copy `agent.exe` to any Windows machine — no Dart runtime required.
 
 ---
 
+## Accessing Other Computers on the Same Network 🌐
+
+The TCP Tunnel agent can bridge traffic to any device on the same local area network (LAN) as the work machine.
+
+### 1. Tunneling Services (RDP, SSH, Web Apps)
+To access a service on another computer on the work network:
+1. In the **Tunnels** tab of the Flutter client, add a new tunnel.
+2. Set the `Remote Host` to the target computer's internal LAN IP address (e.g., `192.168.1.100`) instead of `127.0.0.1`.
+3. Connect the tunnel. The agent will forward connections from your client to that LAN machine.
+
+### 2. Remote File Explorer (UNC Paths & Network Shares)
+To browse files on another network computer:
+1. Go to the **Files** tab in the Flutter client.
+2. In the path bar, enter a valid UNC/network path (e.g., `\\192.168.1.100\SharedFolder`).
+3. If the work computer has network credentials to access that folder, the file explorer will display and manage its files.
+
+> [!WARNING]
+> Running active subnet scans (like ping sweeps) to discover other computers on a corporate network may violate your company's IT policies and trigger intrusion alerts. To see devices the work computer already knows about, you can run `arp -a` on the work machine.
+
+---
+
 ## Project Structure
 
 ```
