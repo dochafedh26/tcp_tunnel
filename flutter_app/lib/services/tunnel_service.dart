@@ -114,10 +114,20 @@ class TunnelService extends ChangeNotifier {
     }
 
     _setState(TunnelConnectionState.connecting);
-    _log(LogLevel.info, 'Connecting to relay at $relayUrl...');
+
+    var normalizedUrl = relayUrl.trim();
+    if (!normalizedUrl.startsWith('ws://') && !normalizedUrl.startsWith('wss://')) {
+      if (normalizedUrl.startsWith('http://') || normalizedUrl.startsWith('https://')) {
+        normalizedUrl = normalizedUrl.replaceFirst('http', 'ws');
+      } else {
+        normalizedUrl = 'wss://$normalizedUrl';
+      }
+    }
+
+    _log(LogLevel.info, 'Connecting to relay at $normalizedUrl...');
 
     try {
-      _ws = IOWebSocketChannel.connect(Uri.parse(relayUrl));
+      _ws = IOWebSocketChannel.connect(Uri.parse(normalizedUrl));
 
       // Send auth
       _send(jsonEncode({'type': 'auth', 'token': token, 'role': 'client'}));

@@ -68,8 +68,17 @@ class AgentService {
   // ── Connection ────────────────────────────────────────────────────────────
 
   Future<void> _connect() async {
-    _log.info('Connecting to relay at $relayUrl ...');
-    _channel = IOWebSocketChannel.connect(Uri.parse(relayUrl));
+    var normalizedUrl = relayUrl.trim();
+    if (!normalizedUrl.startsWith('ws://') && !normalizedUrl.startsWith('wss://')) {
+      if (normalizedUrl.startsWith('http://') || normalizedUrl.startsWith('https://')) {
+        normalizedUrl = normalizedUrl.replaceFirst('http', 'ws');
+      } else {
+        normalizedUrl = 'wss://$normalizedUrl';
+      }
+    }
+
+    _log.info('Connecting to relay at $normalizedUrl ...');
+    _channel = IOWebSocketChannel.connect(Uri.parse(normalizedUrl));
 
     // Send auth immediately
     _channel!.sink.add(Protocol.authMessage(token, 'agent'));
