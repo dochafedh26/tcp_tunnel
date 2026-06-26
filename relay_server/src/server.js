@@ -23,6 +23,18 @@ const sessions = new Map();
 
 // ─── HTTP Server ─────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
+  // Set CORS headers for all incoming requests
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Handle OPTIONS preflight requests
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   if (req.url === '/health') {
     const stats = [...sessions.values()].map((s) => s.getStats());
     res.writeHead(200, { 'Content-Type': 'application/json' });

@@ -23,14 +23,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final currentProfile = settings.selectedProfile;
     final relayUrlCtrl = TextEditingController(text: currentProfile.relayUrl);
 
+    bool isLoading = false;
+    List<Map<String, dynamic>> agents = [];
+    String? errorMessage;
+    bool hasQueried = false;
+
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDialogState) {
-          bool isLoading = false;
-          List<Map<String, dynamic>> agents = [];
-          String? errorMessage;
-          bool hasQueried = false;
 
           Future<void> performQuery() async {
             setDialogState(() {
