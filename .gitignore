@@ -20,9 +20,9 @@ flutter_app/android/app/release/
 flutter_app/ios/.symlinks/
 flutter_app/ios/Pods/
 flutter_app/ios/Runner.xcworkspace/
-flutter_app/windows/flutter/
-flutter_app/linux/flutter/
-flutter_app/macos/Flutter/
+flutter_app/windows/flutter/ephemeral/
+flutter_app/linux/flutter/ephemeral/
+flutter_app/macos/Flutter/ephemeral/
 
 # ── Dart Agent ────────────────────────────────────────────────────────────────
 agent/.dart_tool/
