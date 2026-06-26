@@ -13,6 +13,7 @@ class SettingsService extends ChangeNotifier {
   static const _keyTunnels = 'tunnels';
   static const _keyProfiles = 'machine_profiles';
   static const _keySelectedProfile = 'selected_profile_id';
+  static const _keyGitHubToken = 'github_token';
 
   static const defaultRelayUrl = 'wss://tcptunnel-production.up.railway.app';
   static const defaultToken = 'changeme';
@@ -40,6 +41,12 @@ class SettingsService extends ChangeNotifier {
   bool get autoReconnect => _prefs?.getBool(_keyAutoReconnect) ?? true;
   Future<void> setAutoReconnect(bool value) async {
     await _prefs?.setBool(_keyAutoReconnect, value);
+    notifyListeners();
+  }
+
+  String get githubToken => _prefs?.getString(_keyGitHubToken) ?? '';
+  Future<void> setGithubToken(String value) async {
+    await _prefs?.setString(_keyGitHubToken, value);
     notifyListeners();
   }
 

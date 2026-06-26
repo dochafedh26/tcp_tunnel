@@ -103,7 +103,8 @@ class _ShellState extends State<_Shell> {
   }
 
   void _checkForUpdates() async {
-    final release = await UpdaterService.checkLatestRelease();
+    final settings = context.read<SettingsService>();
+    final release = await UpdaterService.checkLatestRelease(settings.githubToken);
     if (release == null || !mounted) return;
 
     final String latestVersion = (release['tag_name'] as String).replaceFirst('v', '');

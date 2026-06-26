@@ -12,11 +12,14 @@ class UpdaterService {
 
   /// Queries the latest GitHub release metadata.
   /// Returns the JSON data if an update is available, or null otherwise.
-  static Future<Map<String, dynamic>?> checkLatestRelease() async {
+  static Future<Map<String, dynamic>?> checkLatestRelease([String? token]) async {
     try {
       final response = await http.get(
         Uri.parse('https://api.github.com/repos/$repoOwner/$repoName/releases/latest'),
-        headers: {'User-Agent': 'TCP-Tunnel-App'},
+        headers: {
+          'User-Agent': 'TCP-Tunnel-App',
+          if (token != null && token.isNotEmpty) 'Authorization': 'token $token',
+        },
       );
 
       if (response.statusCode == 200) {

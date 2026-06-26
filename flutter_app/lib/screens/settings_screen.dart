@@ -261,11 +261,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  late TextEditingController _githubTokenCtrl;
+  bool _githubTokenObscured = true;
+
   @override
   void initState() {
     super.initState();
     final s = context.read<SettingsService>();
     _autoReconnect = s.autoReconnect;
+    _githubTokenCtrl = TextEditingController(text: s.githubToken);
+  }
+
+  @override
+  void dispose() {
+    _githubTokenCtrl.dispose();
+    super.dispose();
   }
 
   void _showProfileDialog({MachineProfile? existing}) {
@@ -556,6 +566,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ],
           ).animate().fadeIn(duration: 400.ms, delay: 80.ms).slideY(begin: 0.05, end: 0),
+
+          const SizedBox(height: 16),
+
+          // ── GitHub Integration ───────────────────────────────────────────
+          _Section(
+            title: 'GitHub Integration',
+            icon: Icons.sync_lock_rounded,
+            children: [
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Enter a Personal Access Token (PAT) to check for updates if your repository is private.',
+                  style: TextStyle(color: Color(0xFF8892A4), fontSize: 11),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _githubTokenCtrl,
+                obscureText: _githubTokenObscured,
+                style: const TextStyle(color: Colors.white, fontSize: 13),
+                onChanged: (v) async {
+                  await settings.setGithubToken(v.trim());
+                },
+                decoration: InputDecoration(
+                  labelText: 'Personal Access Token (PAT)',
+                  labelStyle: const TextStyle(color: Color(0xFF8892A4), fontSize: 12),
+                  enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF1A2340))),
+                  focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF00BFA5))),
+                  suffixIcon: IconButton(
+                    icon: Icon(
+                      _githubTokenObscured ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                      size: 18,
+                      color: const Color(0xFF8892A4),
+                    ),
+                    onPressed: () => setState(() => _githubTokenObscured = !_githubTokenObscured),
+                  ),
+                ),
+              ),
+            ],
+          ).animate().fadeIn(duration: 400.ms, delay: 120.ms).slideY(begin: 0.05, end: 0),
 
           const SizedBox(height: 16),
 
