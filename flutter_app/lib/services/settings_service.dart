@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 import '../models/machine_profile.dart';
 import '../models/tunnel_config.dart';
 
@@ -13,7 +14,7 @@ class SettingsService extends ChangeNotifier {
   static const _keyProfiles = 'machine_profiles';
   static const _keySelectedProfile = 'selected_profile_id';
 
-  static const defaultRelayUrl = 'ws://localhost:8080';
+  static const defaultRelayUrl = 'wss://tcptunnel-production.up.railway.app';
   static const defaultToken = 'changeme';
 
   SharedPreferences? _prefs;
@@ -24,7 +25,7 @@ class SettingsService extends ChangeNotifier {
     // Migrate legacy settings to machine profiles if none exist
     if (profiles.isEmpty) {
       final legacyUrl = _prefs?.getString(_keyRelayUrl) ?? defaultRelayUrl;
-      final legacyToken = _prefs?.getString(_keyToken) ?? defaultToken;
+      final legacyToken = _prefs?.getString(_keyToken) ?? const Uuid().v4();
       final defaultProfile = MachineProfile(
         id: 'default',
         name: 'Default Machine',

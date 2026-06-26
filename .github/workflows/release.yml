@@ -27,6 +27,18 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Inject Version from Tag
+        shell: bash
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          VERSION="${TAG_NAME#v}"
+          echo "Injecting version $VERSION into codebase"
+          sed -i "s/^version: .*/version: $VERSION+1/g" flutter_app/pubspec.yaml || true
+          sed -i "s/static const String currentVersion = '[^']*'/static const String currentVersion = '$VERSION'/g" flutter_app/lib/services/updater_service.dart || true
+          sed -i "s/^version: .*/version: $VERSION/g" agent/pubspec.yaml || true
+          sed -i "s/static const String currentVersion = '[^']*'/static const String currentVersion = '$VERSION'/g" agent/lib/updater.dart || true
+          sed -i 's/"version": "[^"]*"/"version": "'"$VERSION"'"/g' relay_server/package.json || true
+
       - name: Setup Dart SDK
         uses: dart-lang/setup-dart@v1
 
@@ -65,6 +77,18 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Inject Version from Tag
+        shell: bash
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          VERSION="${TAG_NAME#v}"
+          echo "Injecting version $VERSION into codebase"
+          sed -i "s/^version: .*/version: $VERSION+1/g" flutter_app/pubspec.yaml || true
+          sed -i "s/static const String currentVersion = '[^']*'/static const String currentVersion = '$VERSION'/g" flutter_app/lib/services/updater_service.dart || true
+          sed -i "s/^version: .*/version: $VERSION/g" agent/pubspec.yaml || true
+          sed -i "s/static const String currentVersion = '[^']*'/static const String currentVersion = '$VERSION'/g" agent/lib/updater.dart || true
+          sed -i 's/"version": "[^"]*"/"version": "'"$VERSION"'"/g' relay_server/package.json || true
 
       - name: Setup Java (for Android build)
         if: matrix.target == 'android'

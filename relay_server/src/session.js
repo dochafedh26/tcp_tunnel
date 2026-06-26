@@ -55,26 +55,28 @@ class RelaySession {
   /**
    * Attach the Dart agent WebSocket.
    * @param {import('ws').WebSocket} ws
+   * @param {string} [agentName]
    */
-  setAgent(ws) {
+  setAgent(ws, agentName) {
     if (this.agentWs) {
       this.logger.warn(`[${this.sessionId}] Replacing existing agent connection`);
       this.agentWs.terminate();
     }
     this.agentWs = ws;
-    this.logger.info(`[${this.sessionId}] Agent connected`);
+    this.agentName = agentName || 'Unknown Agent';
+    this.logger.info(`[${this.sessionId}] Agent "${this.agentName}" connected`);
 
     // Notify agent auth succeeded
     ws.send(JSON.stringify({ type: 'auth_ok', role: 'agent' }));
 
     ws.on('message', (data, isBinary) => this._handleAgentMessage(data, isBinary));
     ws.on('close', () => {
-      this.logger.info(`[${this.sessionId}] Agent disconnected`);
+      this.logger.info(`[${this.sessionId}] Agent "${this.agentName}" disconnected`);
       this.agentWs = null;
       this._handleClose('agent');
     });
     ws.on('error', (err) => {
-      this.logger.error(`[${this.sessionId}] Agent WS error: ${err.message}`);
+      this.logger.error(`[${this.sessionId}] Agent "${this.agentName}" WS error: ${err.message}`);
     });
 
     // If client is already connected, notify both sides
@@ -176,6 +178,7 @@ class RelaySession {
     const uptimeMs = Date.now() - this.createdAt.getTime();
     return {
       sessionId: this.sessionId,
+      agentName: this.agentName || 'Unknown Agent',
       hasClient: this.clientWs?.readyState === 1,
       hasAgent: this.agentWs?.readyState === 1,
       channelCount: this.channelCount,

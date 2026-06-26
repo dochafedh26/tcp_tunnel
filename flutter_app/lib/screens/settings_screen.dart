@@ -1,8 +1,11 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import '../services/settings_service.dart';
+import '../services/updater_service.dart';
 import '../models/machine_profile.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -15,6 +18,248 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _autoReconnect = true;
 
+  Future<void> _discoverAgents() async {
+    final settings = context.read<SettingsService>();
+    final currentProfile = settings.selectedProfile;
+    final relayUrlCtrl = TextEditingController(text: currentProfile.relayUrl);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          bool isLoading = false;
+          List<Map<String, dynamic>> agents = [];
+          String? errorMessage;
+          bool hasQueried = false;
+
+          Future<void> performQuery() async {
+            setDialogState(() {
+              isLoading = true;
+              errorMessage = null;
+              hasQueried = true;
+            });
+
+            try {
+              var url = relayUrlCtrl.text.trim();
+              if (url.isEmpty) {
+                throw Exception('Relay URL is empty');
+              }
+              // Translate ws/wss to http/https
+              if (url.startsWith('wss://')) {
+                url = url.replaceFirst('wss://', 'https://');
+              } else if (url.startsWith('ws://')) {
+                url = url.replaceFirst('ws://', 'http://');
+              } else {
+                url = 'https://$url';
+              }
+              if (url.endsWith('/')) {
+                url = url.substring(0, url.length - 1);
+              }
+              final targetUrl = '$url/health';
+
+              final response = await http.get(Uri.parse(targetUrl)).timeout(const Duration(seconds: 8));
+              if (response.statusCode == 200) {
+                final data = jsonDecode(response.body) as Map<String, dynamic>;
+                final sessions = data['sessions'] as List<dynamic>? ?? [];
+                
+                final foundAgents = sessions.map((s) => s as Map<String, dynamic>).toList();
+
+                setDialogState(() {
+                  agents = foundAgents;
+                  isLoading = false;
+                });
+              } else {
+                throw Exception('HTTP Status ${response.statusCode}');
+              }
+            } catch (e) {
+              setDialogState(() {
+                errorMessage = e.toString().replaceAll('Exception: ', '');
+                isLoading = false;
+              });
+            }
+          }
+
+          Future<void> selectAgent(Map<String, dynamic> agent) async {
+            final agentName = agent['agentName'] as String? ?? 'Unknown Agent';
+            final tokenCtrl = TextEditingController();
+            bool tokenObscured = true;
+
+            final pairSuccess = await showDialog<bool>(
+              context: ctx,
+              builder: (pCtx) => StatefulBuilder(
+                builder: (context, setPairState) => AlertDialog(
+                  backgroundColor: const Color(0xFF0F1629),
+                  title: Text('Pair with $agentName', style: const TextStyle(color: Colors.white)),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Please enter the Auth Token shown in the agent terminal on your work machine.',
+                        style: TextStyle(color: Colors.white70, fontSize: 13),
+                      ),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: tokenCtrl,
+                        obscureText: tokenObscured,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: InputDecoration(
+                          labelText: 'Auth Token (UUID)',
+                          labelStyle: const TextStyle(color: Color(0xFF8892A4)),
+                          enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF1A2340))),
+                          focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF00BFA5))),
+                          suffixIcon: IconButton(
+                            icon: Icon(
+                              tokenObscured ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                              size: 18,
+                              color: const Color(0xFF8892A4),
+                            ),
+                            onPressed: () => setPairState(() => tokenObscured = !tokenObscured),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(pCtx, false),
+                      child: const Text('Cancel', style: TextStyle(color: Color(0xFF8892A4))),
+                    ),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00BFA5)),
+                      onPressed: () {
+                        final tokenVal = tokenCtrl.text.trim();
+                        if (tokenVal.isNotEmpty) {
+                          Navigator.pop(pCtx, true);
+                        }
+                      },
+                      child: const Text('Pair & Connect'),
+                    ),
+                  ],
+                ),
+              ),
+            );
+
+            if (pairSuccess == true) {
+              final tokenVal = tokenCtrl.text.trim();
+              final settings = context.read<SettingsService>();
+              final list = List<MachineProfile>.from(settings.profiles);
+
+              final newProfile = MachineProfile(
+                id: const Uuid().v4(),
+                name: agentName,
+                relayUrl: relayUrlCtrl.text.trim(),
+                token: tokenVal,
+              );
+              list.add(newProfile);
+              await settings.saveProfiles(list);
+              await settings.setSelectedProfileId(newProfile.id);
+
+              Navigator.pop(ctx); // Close discovery dialog
+              _showSnackBar('Paired and selected profile: $agentName');
+            }
+          }
+
+          return AlertDialog(
+            backgroundColor: const Color(0xFF0F1629),
+            title: const Text('Discover Agents', style: TextStyle(color: Colors.white)),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: relayUrlCtrl,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: 'Relay Server URL',
+                      labelStyle: const TextStyle(color: Color(0xFF8892A4)),
+                      hintText: 'wss://...',
+                      hintStyle: const TextStyle(color: Color(0xFF4A5568)),
+                      enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF1A2340))),
+                      focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF00BFA5))),
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.search, color: Color(0xFF00BFA5)),
+                        onPressed: performQuery,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  if (isLoading)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 24),
+                      child: CircularProgressIndicator(color: Color(0xFF00BFA5)),
+                    )
+                  else if (errorMessage != null)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      child: Text(
+                        'Error: $errorMessage',
+                        style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+                        textAlign: TextAlign.center,
+                      ),
+                    )
+                  else if (hasQueried && agents.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Text(
+                        'No agents currently connected to this relay.',
+                        style: TextStyle(color: Colors.white70, fontSize: 13),
+                        textAlign: TextAlign.center,
+                      ),
+                    )
+                  else if (agents.isNotEmpty)
+                    Flexible(
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: agents.length,
+                        itemBuilder: (context, index) {
+                          final a = agents[index];
+                          final name = a['agentName'] as String? ?? 'Unknown';
+                          final hasClient = a['hasClient'] as bool? ?? false;
+                          final hasAgent = a['hasAgent'] as bool? ?? false;
+
+                          if (!hasAgent) return const SizedBox.shrink();
+
+                          return Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0A0E1A),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: const Color(0xFF2A3450)),
+                            ),
+                            child: ListTile(
+                              leading: const Icon(Icons.computer, color: Color(0xFF00E5FF)),
+                              title: Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                              subtitle: Text(
+                                hasClient ? 'In Use (Tunnel Busy)' : 'Available (Waiting for connection)',
+                                style: TextStyle(
+                                  color: hasClient ? Colors.orangeAccent : const Color(0xFF00BFA5),
+                                  fontSize: 11,
+                                ),
+                              ),
+                              trailing: const Icon(Icons.chevron_right, color: Color(0xFF8892A4), size: 18),
+                              onTap: () => selectAgent(a),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Close', style: TextStyle(color: Color(0xFF8892A4))),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -25,8 +270,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void _showProfileDialog({MachineProfile? existing}) {
     final isEdit = existing != null;
     final nameCtrl = TextEditingController(text: existing?.name ?? '');
-    final urlCtrl = TextEditingController(text: existing?.relayUrl ?? '');
-    final tokenCtrl = TextEditingController(text: existing?.token ?? '');
+    final urlCtrl = TextEditingController(text: existing?.relayUrl ?? (isEdit ? '' : SettingsService.defaultRelayUrl));
+    final tokenCtrl = TextEditingController(text: existing?.token ?? const Uuid().v4());
     bool tokenObscured = true;
 
     showDialog(
@@ -72,13 +317,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     labelStyle: const TextStyle(color: Color(0xFF8892A4)),
                     enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF1A2340))),
                     focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF00BFA5))),
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        tokenObscured ? Icons.visibility_outlined : Icons.visibility_off_outlined,
-                        size: 18,
-                        color: const Color(0xFF8892A4),
-                      ),
-                      onPressed: () => setDialogState(() => tokenObscured = !tokenObscured),
+                    suffixIcon: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(
+                            Icons.refresh_rounded,
+                            size: 18,
+                            color: Color(0xFF00BFA5),
+                          ),
+                          tooltip: 'Generate Random Token',
+                          onPressed: () => setDialogState(() {
+                            tokenCtrl.text = const Uuid().v4();
+                          }),
+                        ),
+                        IconButton(
+                          icon: Icon(
+                            tokenObscured ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                            size: 18,
+                            color: const Color(0xFF8892A4),
+                          ),
+                          onPressed: () => setDialogState(() => tokenObscured = !tokenObscured),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -243,17 +504,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 );
               }),
               const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: () => _showProfileDialog(),
-                icon: const Icon(Icons.add),
-                label: const Text('Add Machine Profile'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF00BFA5),
-                  side: const BorderSide(color: Color(0xFF00BFA5)),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  minimumSize: const Size(double.infinity, 44),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _showProfileDialog(),
+                      icon: const Icon(Icons.add),
+                      label: const Text('Add Profile'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF00BFA5),
+                        side: const BorderSide(color: Color(0xFF00BFA5)),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: _discoverAgents,
+                      icon: const Icon(Icons.sensors, size: 18, color: Colors.white),
+                      label: const Text('Discover', style: TextStyle(color: Colors.white)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF00BFA5),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.05, end: 0),
@@ -280,16 +559,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 16),
 
           // ── Quick reference ──────────────────────────────────────────────
-          const _Section(
+          _Section(
             title: 'Quick Reference',
             icon: Icons.info_outline_rounded,
             children: [
-              _InfoRow(label: 'Start relay', value: 'node src/server.js'),
-              _InfoRow(label: 'Start agent', value: 'dart run bin/agent.dart --relay <url> --token <token>'),
-              _InfoRow(label: 'Compile agent', value: 'dart compile exe bin/agent.dart -o agent.exe'),
+              const _InfoRow(label: 'Start relay server locally', value: 'node src/server.js'),
+              _InfoRow(
+                label: 'Start agent on work machine',
+                value: 'dart run bin/agent.dart --relay ${settings.selectedProfile.relayUrl} --token ${settings.selectedProfile.token}',
+              ),
+              const _InfoRow(label: 'Compile agent to executable', value: 'dart compile exe bin/agent.dart -o agent.exe'),
             ],
           ),
 
+          const SizedBox(height: 16),
+          Center(
+            child: Text(
+              'TCP Tunnel App v${UpdaterService.currentVersion}',
+              style: const TextStyle(color: Color(0xFF8892A4), fontSize: 11),
+            ),
+          ),
           const SizedBox(height: 40),
         ],
       ),

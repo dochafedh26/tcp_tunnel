@@ -1,6 +1,7 @@
 'use strict';
 
 require('dotenv').config();
+const pkg = require('../package.json');
 
 const http = require('http');
 const { WebSocketServer } = require('ws');
@@ -75,7 +76,7 @@ wss.on('connection', (ws, req) => {
     }
 
     const validTokens = AUTH_TOKEN.split(',').map(t => t.trim());
-    if (!validTokens.includes(msg.token)) {
+    if (AUTH_TOKEN !== '*' && !validTokens.includes(msg.token)) {
       logger.warn(`Invalid token from ${clientIp}`);
       ws.send(JSON.stringify({ type: 'auth_error', message: 'Invalid token' }));
       ws.terminate();
@@ -105,7 +106,7 @@ wss.on('connection', (ws, req) => {
     if (role === 'client') {
       session.setClient(ws);
     } else {
-      session.setAgent(ws);
+      session.setAgent(ws, msg.name);
     }
 
     // ── Step 4: Cleanup on disconnect ─────────────────────────────────────────
@@ -125,12 +126,15 @@ wss.on('connection', (ws, req) => {
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
+const rawVersion = process.env.RAILWAY_GIT_TAG || process.env.VERSION || pkg.version || '1.0.0';
+const VERSION = rawVersion.startsWith('v') ? rawVersion.substring(1) : rawVersion;
+
 server.listen(PORT, () => {
   logger.info('══════════════════════════════════════════');
-  logger.info(' TCP Tunnel Relay Server');
+  logger.info(` TCP Tunnel Relay Server v${VERSION}`);
   logger.info('══════════════════════════════════════════');
   logger.info(`Listening on port ${PORT}`);
-  logger.info(`Auth token : ${AUTH_TOKEN === 'changeme' ? 'changeme [⚠ CHANGE IN PRODUCTION]' : '[configured]'}`);
+  logger.info(`Auth token : ${AUTH_TOKEN === '*' ? 'ANY (Wildcard mode enabled)' : (AUTH_TOKEN === 'changeme' ? 'changeme [⚠ CHANGE IN PRODUCTION]' : '[configured]')}`);
   logger.info(`Health URL : http://localhost:${PORT}/health`);
   logger.info('══════════════════════════════════════════');
 });

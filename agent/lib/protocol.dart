@@ -20,8 +20,13 @@ class Protocol {
 
   // ── Control message builders ──────────────────────────────────────────────
 
-  static String authMessage(String token, String role) =>
-      jsonEncode({'type': 'auth', 'token': token, 'role': role});
+  static String authMessage(String token, String role, {String? name}) =>
+      jsonEncode({
+        'type': 'auth',
+        'token': token,
+        'role': role,
+        if (name != null) 'name': name,
+      });
 
   static String openMessage(String channelId, String host, int port) =>
       jsonEncode({'type': 'open', 'channelId': channelId, 'host': host, 'port': port});

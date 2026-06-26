@@ -1,9 +1,11 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:args/args.dart';
 import 'package:logging/logging.dart';
 import 'package:tcp_tunnel_agent/agent_service.dart';
 import 'package:tcp_tunnel_agent/updater.dart';
+import 'package:uuid/uuid.dart';
 
 void main(List<String> arguments) async {
   // ── Logging setup ─────────────────────────────────────────────────────────
@@ -51,7 +53,7 @@ void main(List<String> arguments) async {
   }
 
   if (args['help'] as bool) {
-    stdout.writeln('TCP Tunnel Agent v1.0.0');
+    stdout.writeln('TCP Tunnel Agent v${AgentUpdater.currentVersion}');
     stdout.writeln('═══════════════════════════════════════════════════');
     stdout.writeln('Runs on your WORK machine. Connects OUT to the relay');
     stdout.writeln('server (port 443/wss) and forwards TCP');
@@ -66,18 +68,52 @@ void main(List<String> arguments) async {
   }
 
   final relayUrl = args['relay'] as String;
-  final token = args['token'] as String;
+  var token = args['token'] as String;
+
+  if (token == 'changeme') {
+    final configFile = File('agent_settings.json');
+    if (configFile.existsSync()) {
+      try {
+        final content = configFile.readAsStringSync();
+        final json = jsonDecode(content) as Map<String, dynamic>;
+        if (json.containsKey('token')) {
+          token = json['token'] as String;
+        }
+      } catch (e) {
+        stderr.writeln('Warning: Failed to read agent_settings.json: $e');
+      }
+    }
+
+    if (token == 'changeme' || token.trim().isEmpty) {
+      token = const Uuid().v4();
+      try {
+        configFile.writeAsStringSync(jsonEncode({'token': token}));
+        stdout.writeln('Generated new persistent token in agent_settings.json');
+      } catch (e) {
+        stderr.writeln('Warning: Failed to save agent_settings.json: $e');
+      }
+    }
+  }
+
   final sharedDirArg = args['shared-dir'] as String;
   final sharedDir = sharedDirArg.isEmpty ? Directory.current.path : sharedDirArg;
 
-  // ── Banner ────────────────────────────────────────────────────────────────
-  stdout.writeln('╔══════════════════════════════════════════╗');
-  stdout.writeln('║       TCP Tunnel Agent  v${AgentUpdater.currentVersion}           ║');
-  stdout.writeln('╚══════════════════════════════════════════╝');
-  stdout.writeln('  Relay  : $relayUrl');
-  stdout.writeln('  Token  : ${token.length > 3 ? "${token.substring(0, 3)}***" : "***"}');
-  stdout.writeln('  Shared : $sharedDir');
-  stdout.writeln('');
+  final hostname = Platform.localHostname;
+  stdout.writeln('╔══════════════════════════════════════════════════════════════════╗');
+  final title = '                    TCP Tunnel Agent  v${AgentUpdater.currentVersion}';
+  stdout.writeln('║${title.padRight(66)}║');
+  stdout.writeln('╚══════════════════════════════════════════════════════════════════╝');
+  stdout.writeln('  Relay      : $relayUrl');
+  stdout.writeln('  Agent Name : $hostname');
+  stdout.writeln('  Auth Token : $token');
+  stdout.writeln('  Shared Dir : $sharedDir');
+  stdout.writeln('────────────────────────────────────────────────────────────────────');
+  stdout.writeln('  👉 To connect from the Flutter app:');
+  stdout.writeln('     1. Open Settings -> Add Machine Profile');
+  stdout.writeln('     2. Enter Relay URL: $relayUrl');
+  stdout.writeln('     3. Enter Auth Token: $token');
+  stdout.writeln('     (Or select "$hostname" via "Discover Agents" in settings)');
+  stdout.writeln('────────────────────────────────────────────────────────────────────');
   stdout.writeln('Press Ctrl+C to stop.');
   stdout.writeln('');
 

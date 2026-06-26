@@ -81,8 +81,8 @@ class AgentService {
     _channel = IOWebSocketChannel.connect(Uri.parse(normalizedUrl));
 
     // Send auth immediately
-    _channel!.sink.add(Protocol.authMessage(token, 'agent'));
-    _log.info('Auth message sent');
+    _channel!.sink.add(Protocol.authMessage(token, 'agent', name: Platform.localHostname));
+    _log.info('Auth message sent with hostname: ${Platform.localHostname}');
 
     final completer = Completer<void>();
 
