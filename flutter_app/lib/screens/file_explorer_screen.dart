@@ -445,7 +445,7 @@ class _FileExplorerScreenState extends State<FileExplorerScreen> {
     final parts = _currentPath.split('/').where((p) => p.isNotEmpty).toList();
     return Container(
       color: const Color(0xFF0F1629),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         children: [
           IconButton(
@@ -458,29 +458,36 @@ class _FileExplorerScreenState extends State<FileExplorerScreen> {
             onTap: () => _navigateTo(''),
             child: const Icon(Icons.home_outlined, size: 20, color: Colors.white70),
           ),
-          const Icon(Icons.chevron_right, size: 16, color: Color(0xFF4A5568)),
+          if (parts.isNotEmpty)
+            const Icon(Icons.chevron_right, size: 16, color: Color(0xFF4A5568)),
           Expanded(
-            child: ListView.separated(
+            child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
-              itemCount: parts.length,
-              separatorBuilder: (_, __) => const Icon(Icons.chevron_right, size: 16, color: Color(0xFF4A5568)),
-              itemBuilder: (ctx, idx) {
-                final fullSubPath = parts.sublist(0, idx + 1).join('/');
-                final isLast = idx == parts.length - 1;
-                return InkWell(
-                  onTap: isLast ? null : () => _navigateTo(fullSubPath),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Text(
-                      parts[idx],
-                      style: TextStyle(
-                        color: isLast ? const Color(0xFF00BFA5) : Colors.white70,
-                        fontWeight: isLast ? FontWeight.bold : FontWeight.normal,
-                      ),
-                    ),
-                  ),
-                );
-              },
+              child: Row(
+                children: parts.isEmpty
+                    ? const []
+                    : List.generate(parts.length * 2 - 1, (index) {
+                        if (index.isOdd) {
+                          return const Icon(Icons.chevron_right, size: 16, color: Color(0xFF4A5568));
+                        }
+                        final partIdx = index ~/ 2;
+                        final fullSubPath = parts.sublist(0, partIdx + 1).join('/');
+                        final isLast = partIdx == parts.length - 1;
+                        return InkWell(
+                          onTap: isLast ? null : () => _navigateTo(fullSubPath),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+                            child: Text(
+                              parts[partIdx],
+                              style: TextStyle(
+                                color: isLast ? const Color(0xFF00BFA5) : Colors.white70,
+                                fontWeight: isLast ? FontWeight.bold : FontWeight.normal,
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+              ),
             ),
           ),
         ],
