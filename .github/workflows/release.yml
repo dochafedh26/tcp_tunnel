@@ -55,12 +55,12 @@ jobs:
         include:
           - target: android
             os: ubuntu-latest
-            output-path: build/app/outputs/flutter-apk/app-release.apk
-            release-name: tcp_tunnel_app.apk
+            output-path: build/app/outputs/flutter-apk/tcp_tunnel_client.apk
+            release-name: tcp_tunnel_client.apk
           - target: windows
             os: windows-latest
             output-path: build/windows/x64/runner/Release
-            release-name: tcp_tunnel_app-windows.zip
+            release-name: tcp_tunnel_client-windows.zip
 
     steps:
       - name: Checkout Code
@@ -88,7 +88,9 @@ jobs:
 
       - name: Build Android APK
         if: matrix.target == 'android'
-        run: flutter build apk --release
+        run: |
+          flutter build apk --release
+          mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/tcp_tunnel_client.apk
         working-directory: ./flutter_app
 
       - name: Build Windows App
@@ -101,7 +103,7 @@ jobs:
         if: matrix.target == 'windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path ${{ matrix.output-path }}/* -DestinationPath tcp_tunnel_app-windows.zip
+          Compress-Archive -Path ${{ matrix.output-path }}/* -DestinationPath ${{ matrix.release-name }}
         working-directory: ./flutter_app
 
       - name: Upload Artifact
@@ -126,7 +128,7 @@ jobs:
           files: |
             agent-linux/agent-linux
             agent-windows.exe/agent-windows.exe
-            tcp_tunnel_app.apk/app-release.apk
-            tcp_tunnel_app-windows.zip/tcp_tunnel_app-windows.zip
+            tcp_tunnel_client.apk/tcp_tunnel_client.apk
+            tcp_tunnel_client-windows.zip/tcp_tunnel_client-windows.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
