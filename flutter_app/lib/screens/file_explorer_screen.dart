@@ -59,8 +59,24 @@ class _FileExplorerScreenState extends State<FileExplorerScreen> {
 
   void _navigateUp() {
     if (_currentPath.isEmpty) return;
+
+    // Check if the current path is a Windows drive root (e.g. "C:", "C:/", "c:/")
+    final driveRootRegExp = RegExp(r'^[a-zA-Z]:/?$');
+    if (driveRootRegExp.hasMatch(_currentPath)) {
+      _loadDirectory('');
+      return;
+    }
+
+    // Also check for Unix root
+    if (_currentPath == '/') {
+      _loadDirectory('');
+      return;
+    }
+
     final parts = _currentPath.split('/');
-    parts.removeLast();
+    if (parts.isNotEmpty) {
+      parts.removeLast();
+    }
     _loadDirectory(parts.join('/'));
   }
 

@@ -9,7 +9,7 @@ class PathAccessException implements Exception {
   String toString() => 'PathAccessException: $message';
 }
 
-/// Helper that manages local files and directories safely inside a designated root folder.
+/// Helper that manages local files and directories across the entire filesystem (AnyDesk-style).
 class FileManager {
   final String rootPath;
 
@@ -24,31 +24,49 @@ class FileManager {
     }
   }
 
-  /// Resolves the absolute path and ensures it's within the rootPath.
+  /// Resolves the absolute path across drives and directories.
   String _safeResolve(String requestedPath) {
-    // Treat empty path as root
     if (requestedPath.trim().isEmpty) {
       return rootPath;
     }
 
-    // Normalize path separators and remove redundant parts
-    String fullPath = p.normalize(requestedPath);
-    if (!p.isAbsolute(fullPath)) {
-      fullPath = p.normalize(p.join(rootPath, requestedPath));
+    var fullPath = p.normalize(requestedPath);
+    
+    // On Windows, append trailing slash if the user requested a raw drive letter (e.g. "D:")
+    if (Platform.isWindows && RegExp(r'^[a-zA-Z]:$').hasMatch(fullPath)) {
+      fullPath += '/';
     }
 
-    final canonicalPath = p.canonicalize(fullPath);
-
-    // Ensure resolved path starts with the canonical root path
-    if (!p.isWithin(rootPath, canonicalPath) && canonicalPath != rootPath) {
-      throw PathAccessException('Access denied: Path lies outside the shared root directory.');
-    }
-
-    return canonicalPath;
+    return p.canonicalize(fullPath);
   }
 
-  /// Lists contents of a directory, returning name, relative path, isDir, size, and modified time.
+  /// Lists contents of a directory. Returns drive letters if requestedPath is empty on Windows.
   List<Map<String, dynamic>> listDirectory(String requestedPath) {
+    if (requestedPath.trim().isEmpty) {
+      if (Platform.isWindows) {
+        final drives = <Map<String, dynamic>>[];
+        for (var charCode = 65; charCode <= 90; charCode++) {
+          final driveLetter = String.fromCharCode(charCode);
+          try {
+            final dir = Directory('$driveLetter:\\');
+            if (dir.existsSync()) {
+              drives.add({
+                'name': 'Local Disk ($driveLetter:)',
+                'path': '$driveLetter:/',
+                'isDir': true,
+                'size': 0,
+                'modified': DateTime.now().millisecondsSinceEpoch,
+              });
+            }
+          } catch (_) {}
+        }
+        return drives;
+      } else {
+        // Linux/macOS start at root
+        requestedPath = '/';
+      }
+    }
+
     final safePath = _safeResolve(requestedPath);
     final dir = Directory(safePath);
     if (!dir.existsSync()) {
@@ -56,16 +74,23 @@ class FileManager {
     }
 
     final items = <Map<String, dynamic>>[];
-    for (final entity in dir.listSync()) {
-      final stat = entity.statSync();
-      final relPath = p.relative(entity.path, from: rootPath);
-      items.add({
-        'name': p.basename(entity.path),
-        'path': relPath.replaceAll('\\', '/'),
-        'isDir': entity is Directory,
-        'size': stat.size,
-        'modified': stat.modified.millisecondsSinceEpoch,
-      });
+    try {
+      for (final entity in dir.listSync()) {
+        try {
+          final stat = entity.statSync();
+          items.add({
+            'name': p.basename(entity.path),
+            'path': entity.path.replaceAll('\\', '/'),
+            'isDir': entity is Directory,
+            'size': stat.size,
+            'modified': stat.modified.millisecondsSinceEpoch,
+          });
+        } catch (_) {
+          // Skip files/directories we don't have read/stat permissions for (e.g., System Volume Information)
+        }
+      }
+    } catch (e) {
+      throw PathAccessException('Failed to list directory: $e');
     }
 
     // Sort: directories first, then alphabetically
@@ -148,11 +173,6 @@ class FileManager {
   /// Deletes a file or directory
   void deleteEntity(String requestedPath) {
     final safePath = _safeResolve(requestedPath);
-
-    // Safety check: do not delete the root directory itself!
-    if (safePath == rootPath) {
-      throw PathAccessException('Cannot delete the root directory.');
-    }
 
     if (FileSystemEntity.isDirectorySync(safePath)) {
       Directory(safePath).deleteSync(recursive: true);
