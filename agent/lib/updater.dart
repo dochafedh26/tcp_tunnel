@@ -11,6 +11,8 @@ class AgentUpdater {
     final client = HttpClient();
     client.userAgent = 'TCP-Tunnel-Agent';
 
+    final githubToken = Platform.environment['GITHUB_TOKEN'] ?? Platform.environment['GITHUB_PAT'];
+
     try {
       final uri = Uri.parse('https://api.github.com/repos/$repoOwner/$repoName/releases/latest');
       final request = await client.getUrl(uri);
@@ -42,7 +44,8 @@ class AgentUpdater {
 
         if (asset != null) {
           final String downloadUrl = asset['browser_download_url'];
-          await _performBinarySwap(downloadUrl, client);
+          final int? assetId = asset['id'] as int?;
+          await _performBinarySwap(downloadUrl, assetId, githubToken, client);
         } else {
           stdout.writeln('No suitable binary release found for this OS.');
         }
@@ -68,8 +71,7 @@ class AgentUpdater {
     return false;
   }
 
-  static Future<void> _performBinarySwap(String downloadUrl, HttpClient client) async {
-    stdout.writeln('Downloading update from $downloadUrl...');
+  static Future<void> _performBinarySwap(String downloadUrl, int? assetId, String? githubToken, HttpClient client) async {
     final currentExecutable = Platform.resolvedExecutable;
     
     // If running in development (via dart run), do not replace dart executable itself!
@@ -80,9 +82,50 @@ class AgentUpdater {
 
     final tempFilePath = '$currentExecutable.tmp';
 
-    // 1. Download asset to a temporary file
-    final request = await client.getUrl(Uri.parse(downloadUrl));
-    final response = await request.close();
+    Uri downloadUri;
+    Map<String, String> headers = {};
+    
+    if (githubToken != null && githubToken.isNotEmpty && assetId != null) {
+      downloadUri = Uri.parse('https://api.github.com/repos/$repoOwner/$repoName/releases/assets/$assetId');
+      headers['Authorization'] = 'token $githubToken';
+      headers['Accept'] = 'application/octet-stream';
+      stdout.writeln('Downloading update from private GitHub asset...');
+    } else {
+      downloadUri = Uri.parse(downloadUrl);
+      stdout.writeln('Downloading update from $downloadUrl...');
+    }
+
+    // Download asset to a temporary file, handling redirects manually to avoid forwarding token to S3
+    var redirectCount = 0;
+    var currentUri = downloadUri;
+    HttpClientResponse? response;
+    
+    while (true) {
+      final request = await client.getUrl(currentUri);
+      request.followRedirects = false; // Handle manually
+      
+      if (currentUri.host == 'api.github.com') {
+        headers.forEach((key, value) {
+          request.headers.add(key, value);
+        });
+      }
+      
+      response = await request.close();
+      
+      if (response.statusCode >= 300 && response.statusCode < 400) {
+        final location = response.headers.value('location');
+        if (location != null && redirectCount < 5) {
+          redirectCount++;
+          currentUri = Uri.parse(location);
+          continue;
+        }
+      }
+      break;
+    }
+
+    if (response == null || response.statusCode != 200) {
+      throw Exception('Failed to download update, status code: ${response?.statusCode}');
+    }
     
     final tempFile = File(tempFilePath);
     final fileSink = tempFile.openWrite();

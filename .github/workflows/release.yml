@@ -63,7 +63,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [android, windows]
+        target: [android, windows, linux]
         include:
           - target: android
             os: ubuntu-latest
@@ -73,6 +73,10 @@ jobs:
             os: windows-latest
             output-path: build/windows/x64/runner/Release
             release-name: tcp_tunnel_client-windows.zip
+          - target: linux
+            os: ubuntu-latest
+            output-path: build/linux/x64/release/bundle
+            release-name: tcp_tunnel_client-linux.tar.gz
 
     steps:
       - name: Checkout Code
@@ -102,9 +106,19 @@ jobs:
         with:
           channel: 'stable'
 
+      - name: Install Linux Dependencies
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+
       - name: Enable Windows Desktop Build
         if: matrix.target == 'windows'
         run: flutter config --enable-windows-desktop
+
+      - name: Enable Linux Desktop Build
+        if: matrix.target == 'linux'
+        run: flutter config --enable-linux-desktop
 
       - name: Get Dependencies
         run: flutter pub get
@@ -122,12 +136,24 @@ jobs:
         run: flutter build windows --release
         working-directory: ./flutter_app
 
+      - name: Build Linux App
+        if: matrix.target == 'linux'
+        run: flutter build linux --release
+        working-directory: ./flutter_app
+
       # Compress Windows build folder to .zip
       - name: Package Windows Build
         if: matrix.target == 'windows'
         shell: pwsh
         run: |
           Compress-Archive -Path ${{ matrix.output-path }}/* -DestinationPath ${{ matrix.release-name }}
+        working-directory: ./flutter_app
+
+      # Compress Linux build folder to .tar.gz
+      - name: Package Linux Build
+        if: matrix.target == 'linux'
+        run: |
+          tar -czf ${{ matrix.release-name }} -C ${{ matrix.output-path }} .
         working-directory: ./flutter_app
 
       - name: Upload Artifact
@@ -154,5 +180,6 @@ jobs:
             agent-windows.exe/agent-windows.exe
             tcp_tunnel_client.apk/tcp_tunnel_client.apk
             tcp_tunnel_client-windows.zip/tcp_tunnel_client-windows.zip
+            tcp_tunnel_client-linux.tar.gz/tcp_tunnel_client-linux.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
