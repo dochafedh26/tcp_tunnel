@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
@@ -43,6 +44,7 @@ void main() async {
       foregroundTaskOptions: ForegroundTaskOptions(
         eventAction: ForegroundTaskEventAction.nothing(),
         autoRunOnBoot: false,
+        allowWakeLock: true,
         allowWifiLock: true,
       ),
     );
@@ -278,8 +280,14 @@ class _ShellState extends State<_Shell> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF0A0E1A),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        const MethodChannel('com.tcptunnel.app/lifecycle').invokeMethod('moveTaskToBack');
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0A0E1A),
       // ── App bar ────────────────────────────────────────────────────────
       appBar: AppBar(
         backgroundColor: const Color(0xFF0A0E1A),
@@ -349,8 +357,9 @@ class _ShellState extends State<_Shell> {
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }
 
 class _NavIcon extends StatelessWidget {
