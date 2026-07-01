@@ -6,6 +6,9 @@ import 'package:provider/provider.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import 'package:window_manager/window_manager.dart';
+import 'package:tray_manager/tray_manager.dart';
+
 import 'models/tunnel_config.dart';
 import 'services/settings_service.dart';
 import 'services/tunnel_service.dart';
@@ -20,6 +23,24 @@ void main() async {
 
   // Initialize communication port for foreground task
   FlutterForegroundTask.initCommunicationPort();
+
+  if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+    await windowManager.ensureInitialized();
+
+    WindowOptions windowOptions = const WindowOptions(
+      size: Size(800, 600),
+      minimumSize: Size(450, 550),
+      center: true,
+      title: 'TCP Tunnel',
+    );
+
+    windowManager.waitUntilReadyToShow(windowOptions, () async {
+      await windowManager.show();
+      await windowManager.focus();
+    });
+
+    await windowManager.setPreventClose(true);
+  }
 
   if (Platform.isAndroid) {
     // Request notification permission (required for Android 13+)
@@ -131,15 +152,89 @@ class _Shell extends StatefulWidget {
   State<_Shell> createState() => _ShellState();
 }
 
-class _ShellState extends State<_Shell> {
+class _ShellState extends State<_Shell> with WindowListener, TrayListener {
   int _tabIndex = 0;
 
   @override
   void initState() {
     super.initState();
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      windowManager.addListener(this);
+      trayManager.addListener(this);
+      _initTray();
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkForUpdates();
     });
+  }
+
+  @override
+  void dispose() {
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      windowManager.removeListener(this);
+      trayManager.removeListener(this);
+    }
+    super.dispose();
+  }
+
+  void _initTray() async {
+    try {
+      final String iconPath = Platform.isWindows ? 'assets/app_icon.ico' : 'assets/app_icon.png';
+      await trayManager.setIcon(iconPath);
+      
+      final Menu menu = Menu(
+        items: [
+          MenuItem(
+            key: 'show_app',
+            label: 'Show App',
+          ),
+          MenuItem.separator(),
+          MenuItem(
+            key: 'exit_app',
+            label: 'Exit',
+          ),
+        ],
+      );
+      await trayManager.setContextMenu(menu);
+      await trayManager.setToolTip('TCP Tunnel');
+    } catch (e) {
+      debugPrint('Failed to initialize tray: $e');
+    }
+  }
+
+  @override
+  void onWindowClose() async {
+    final isPreventClose = await windowManager.isPreventClose();
+    if (isPreventClose) {
+      await windowManager.hide();
+    }
+  }
+
+  @override
+  void onTrayIconMouseDown() async {
+    final isVisible = await windowManager.isVisible();
+    if (isVisible) {
+      await windowManager.hide();
+    } else {
+      await windowManager.show();
+      await windowManager.focus();
+    }
+  }
+
+  @override
+  void onTrayIconRightMouseDown() {
+    trayManager.popUpContextMenu();
+  }
+
+  @override
+  void onTrayMenuItemClick(MenuItem menuItem) async {
+    if (menuItem.key == 'show_app') {
+      await windowManager.show();
+      await windowManager.focus();
+    } else if (menuItem.key == 'exit_app') {
+      await windowManager.setPreventClose(false);
+      await windowManager.close();
+    }
   }
 
   void _checkForUpdates() async {
