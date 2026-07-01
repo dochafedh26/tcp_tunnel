@@ -116,7 +116,8 @@ class BackgroundTunnelTaskHandler extends TaskHandler {
       if (data is String) {
         _handleTextMessage(data);
       } else {
-        final bytes = data is Uint8List ? data : Uint8List.fromList(data as List<int>);
+        final List<int> bytesList = data is List<int> ? data : (data as List).cast<int>();
+        final bytes = bytesList is Uint8List ? bytesList : Uint8List.fromList(bytesList);
         if (bytes.isNotEmpty && bytes[0] == _dataFrameType && bytes.length >= _headerLength) {
           _handleDataFrame(bytes);
         }
@@ -186,13 +187,21 @@ class BackgroundTunnelTaskHandler extends TaskHandler {
   }
 
   void _handleDataFrame(Uint8List frame) {
-    final channelId = ascii.decode(frame.sublist(1, _headerLength));
-    final payload = frame.sublist(_headerLength);
-    final socket = _localSockets[channelId];
-    if (socket != null) {
-      socket.add(payload);
-      _bytesIn += payload.length;
-      _notifyStats();
+    try {
+      final channelId = ascii.decode(frame.sublist(1, _headerLength));
+      final payload = frame.sublist(_headerLength);
+      final socket = _localSockets[channelId];
+      if (socket != null) {
+        try {
+          socket.add(payload);
+        } catch (e) {
+          _log('error', 'Error writing to socket on channel $channelId: $e');
+        }
+        _bytesIn += payload.length;
+        _notifyStats();
+      }
+    } catch (e) {
+      _log('error', 'Error decoding data frame: $e');
     }
   }
 
@@ -237,36 +246,48 @@ class BackgroundTunnelTaskHandler extends TaskHandler {
       _log('info', 'Listening on localhost:$localPort → $remoteHost:$remotePort [$name]');
 
       server.listen((Socket socket) {
-        final channelId = _uuid.v4();
-        _localSockets[channelId] = socket;
-        _log('debug', 'New local connection on $name, channelId=$channelId');
+        try {
+          final channelId = _uuid.v4();
+          _localSockets[channelId] = socket;
+          _log('debug', 'New local connection on $name, channelId=$channelId');
 
-        _send(jsonEncode({
-          'type': 'open',
-          'channelId': channelId,
-          'host': remoteHost,
-          'port': remotePort,
-        }));
-        _pendingChannels.add(channelId);
+          _send(jsonEncode({
+            'type': 'open',
+            'channelId': channelId,
+            'host': remoteHost,
+            'port': remotePort,
+          }));
+          _pendingChannels.add(channelId);
 
-        socket.listen(
-          (Uint8List data) {
-            _sendDataFrame(channelId, data);
-            _bytesOut += data.length;
-            _notifyStats();
-          },
-          onDone: () {
-            _send(jsonEncode({'type': 'close', 'channelId': channelId}));
-            _localSockets.remove(channelId);
-            _notifyStats();
-          },
-          onError: (_) {
-            _send(jsonEncode({'type': 'close', 'channelId': channelId}));
-            _localSockets.remove(channelId)?.destroy();
-            _notifyStats();
-          },
-          cancelOnError: true,
-        );
+          socket.listen(
+            (data) {
+              try {
+                _sendDataFrame(channelId, data);
+                _bytesOut += data.length;
+                _notifyStats();
+              } catch (e) {
+                _log('error', 'Error in socket data callback for channel $channelId: $e');
+              }
+            },
+            onDone: () {
+              try {
+                _send(jsonEncode({'type': 'close', 'channelId': channelId}));
+                _localSockets.remove(channelId);
+                _notifyStats();
+              } catch (_) {}
+            },
+            onError: (Object err) {
+              try {
+                _send(jsonEncode({'type': 'close', 'channelId': channelId}));
+                _localSockets.remove(channelId)?.destroy();
+                _notifyStats();
+              } catch (_) {}
+            },
+            cancelOnError: true,
+          );
+        } catch (e) {
+          _log('error', 'Error accepting socket for $name: $e');
+        }
       });
       _notifyStats();
     } catch (e) {
