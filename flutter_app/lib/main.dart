@@ -18,6 +18,9 @@ import 'screens/logs_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Initialize communication port for foreground task
+  FlutterForegroundTask.initCommunicationPort();
+
   if (Platform.isAndroid) {
     // Request notification permission (required for Android 13+)
     await Permission.notification.request();
