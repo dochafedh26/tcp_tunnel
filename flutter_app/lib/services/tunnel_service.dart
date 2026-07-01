@@ -64,6 +64,13 @@ class TunnelService extends ChangeNotifier {
   bool _peerConnected = false;
   bool get peerConnected => _peerConnected;
 
+  // ── Auto-reconnect ─────────────────────────────────────────────────────────
+  String? _lastRelayUrl;
+  String? _lastToken;
+  bool _autoReconnect = true;
+  bool get autoReconnect => _autoReconnect;
+  void setAutoReconnect(bool v) => _autoReconnect = v;
+
   static const _uuid = Uuid();
 
   // ── Wire protocol constants ────────────────────────────────────────────────
@@ -115,6 +122,8 @@ class TunnelService extends ChangeNotifier {
     }
 
     _setState(TunnelConnectionState.connecting);
+    _lastRelayUrl = relayUrl.trim();
+    _lastToken = token;
 
     var normalizedUrl = relayUrl.trim();
     if (!normalizedUrl.startsWith('ws://') && !normalizedUrl.startsWith('wss://')) {
@@ -159,6 +168,8 @@ class TunnelService extends ChangeNotifier {
   /// Disconnect from the relay and stop all tunnel listeners.
   Future<void> disconnect() async {
     _log(LogLevel.info, 'Disconnecting...');
+    _lastRelayUrl = null; // Clear credentials to suppress auto-reconnect
+    _lastToken = null;
     await _cleanup();
     _setState(TunnelConnectionState.disconnected);
     _log(LogLevel.info, 'Disconnected');
@@ -415,6 +426,17 @@ class TunnelService extends ChangeNotifier {
     _cleanup();
     _setState(TunnelConnectionState.disconnected);
     _peerConnected = false;
+
+    // Auto-reconnect after 5 seconds if we have stored credentials
+    if (_autoReconnect && _lastRelayUrl != null && _lastToken != null) {
+      _log(LogLevel.info, 'Auto-reconnecting in 5 seconds...');
+      Future.delayed(const Duration(seconds: 5), () {
+        if (_state == TunnelConnectionState.disconnected &&
+            _lastRelayUrl != null && _lastToken != null) {
+          connect(_lastRelayUrl!, _lastToken!);
+        }
+      });
+    }
   }
 
   Future<void> _cleanup() async {

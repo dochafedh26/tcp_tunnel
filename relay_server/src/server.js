@@ -48,7 +48,27 @@ const server = http.createServer((req, res) => {
 // ─── WebSocket Server ─────────────────────────────────────────────────────────
 const wss = new WebSocketServer({ server });
 
+// ─── Heartbeat ────────────────────────────────────────────────────────────────
+// Railway's reverse proxy drops idle WebSocket connections after ~60s.
+// Ping all connected clients every 25s to keep the connection alive.
+const HEARTBEAT_INTERVAL_MS = 25_000;
+const heartbeatInterval = setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (ws.isAlive === false) {
+      logger.warn('Terminating unresponsive WebSocket client');
+      ws.terminate();
+      return;
+    }
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, HEARTBEAT_INTERVAL_MS);
+
+wss.on('close', () => clearInterval(heartbeatInterval));
+
 wss.on('connection', (ws, req) => {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
   const clientIp = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown')
     .split(',')[0]
     .trim();
