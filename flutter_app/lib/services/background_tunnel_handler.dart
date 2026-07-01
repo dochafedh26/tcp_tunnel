@@ -397,7 +397,7 @@ class BackgroundTunnelTaskHandler extends TaskHandler {
   }
 
   @override
-  Future<void> onDestroy(DateTime timestamp) async {
+  Future<void> onDestroy(DateTime timestamp, bool isNotificationDismissed) async {
     await _cleanup();
   }
 }

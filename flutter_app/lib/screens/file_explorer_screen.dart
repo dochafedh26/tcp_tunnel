@@ -391,17 +391,17 @@ class _FileExplorerScreenState extends State<FileExplorerScreen> {
               borderRadius: BorderRadius.circular(16),
               border: Border.all(color: const Color(0xFF1A2340)),
             ),
-            child: Column(
+            child: const Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.cloud_off_outlined, color: Colors.orangeAccent, size: 48),
-                const SizedBox(height: 16),
-                const Text(
+                Icon(Icons.cloud_off_outlined, color: Colors.orangeAccent, size: 48),
+                SizedBox(height: 16),
+                Text(
                   'Work Agent Offline',
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
                 ),
-                const SizedBox(height: 8),
-                const Text(
+                SizedBox(height: 8),
+                Text(
                   'To browse remote files, connect to the relay server and ensure the work agent is online.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Color(0xFF8892A4), height: 1.4),
@@ -689,13 +689,13 @@ class _FileExplorerScreenState extends State<FileExplorerScreen> {
   }
 
   Widget _buildEmptyWidget() {
-    return Center(
+    return const Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.folder_open, color: Color(0xFF1E294B), size: 56),
-          const SizedBox(height: 16),
-          const Text(
+          Icon(Icons.folder_open, color: Color(0xFF1E294B), size: 56),
+          SizedBox(height: 16),
+          Text(
             'This folder is empty',
             style: TextStyle(color: Color(0xFF8892A4), fontSize: 14),
           ),

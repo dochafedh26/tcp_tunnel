@@ -143,6 +143,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
             if (pairSuccess == true) {
               final tokenVal = tokenCtrl.text.trim();
+              if (!context.mounted) return;
               final settings = context.read<SettingsService>();
               final list = List<MachineProfile>.from(settings.profiles);
 
@@ -156,6 +157,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               await settings.saveProfiles(list);
               await settings.setSelectedProfileId(newProfile.id);
 
+              if (!ctx.mounted) return;
               Navigator.pop(ctx); // Close discovery dialog
               _showSnackBar('Paired and selected profile: $agentName');
             }
@@ -624,10 +626,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
 
           const SizedBox(height: 16),
-          Center(
+          const Center(
             child: Text(
               'TCP Tunnel App v${UpdaterService.currentVersion}',
-              style: const TextStyle(color: Color(0xFF8892A4), fontSize: 11),
+              style: TextStyle(color: Color(0xFF8892A4), fontSize: 11),
             ),
           ),
           const SizedBox(height: 40),
