@@ -128,7 +128,10 @@ class TunnelService extends ChangeNotifier {
     _log(LogLevel.info, 'Connecting to relay at $normalizedUrl...');
 
     try {
-      _ws = IOWebSocketChannel.connect(Uri.parse(normalizedUrl));
+      _ws = IOWebSocketChannel.connect(
+        Uri.parse(normalizedUrl),
+        pingInterval: const Duration(seconds: 20),
+      );
 
       // Send auth
       _send(jsonEncode({'type': 'auth', 'token': token, 'role': 'client'}));

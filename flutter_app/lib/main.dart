@@ -21,6 +21,12 @@ void main() async {
     // Request notification permission (required for Android 13+)
     await Permission.notification.request();
 
+    // Ask user to exempt us from battery optimization so Android cannot
+    // kill our process when we go to the background.
+    if (await Permission.ignoreBatteryOptimizations.isDenied) {
+      await Permission.ignoreBatteryOptimizations.request();
+    }
+
     // Configure flutter_foreground_task — runs a proper Android Foreground
     // Service that survives Home button / app switching.
     FlutterForegroundTask.init(
@@ -57,12 +63,14 @@ void main() async {
   }
 
   runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider.value(value: tunnel),
-        ChangeNotifierProvider.value(value: settings),
-      ],
-      child: const TcpTunnelApp(),
+    WithForegroundTask(
+      child: MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: tunnel),
+          ChangeNotifierProvider.value(value: settings),
+        ],
+        child: const TcpTunnelApp(),
+      ),
     ),
   );
 }
