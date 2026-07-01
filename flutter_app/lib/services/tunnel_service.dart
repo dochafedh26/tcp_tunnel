@@ -10,6 +10,7 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import '../models/log_entry.dart';
 import '../models/tunnel_config.dart';
+import 'background_tunnel_handler.dart';
 
 /// Connection state of the tunnel service.
 enum TunnelConnectionState { disconnected, connecting, connected, error }
@@ -73,6 +74,59 @@ class TunnelService extends ChangeNotifier {
 
   static const _uuid = Uuid();
 
+  // ── Constructor ────────────────────────────────────────────────────────────
+  TunnelService() {
+    if (Platform.isAndroid) {
+      FlutterForegroundTask.addTaskDataCallback(_onReceiveTaskData);
+    }
+  }
+
+  void _onReceiveTaskData(Object data) {
+    if (data is Map<String, dynamic>) {
+      final type = data['type'] as String?;
+      switch (type) {
+        case 'state':
+          final val = data['value'] as String;
+          final err = data['error'] as String?;
+          if (val == 'connected') {
+            _setState(TunnelConnectionState.connected);
+          } else if (val == 'connecting') {
+            _setState(TunnelConnectionState.connecting);
+          } else if (val == 'disconnected') {
+            _setState(TunnelConnectionState.disconnected);
+          } else if (val == 'error') {
+            _setState(TunnelConnectionState.error, error: err);
+          }
+        case 'log':
+          final lvlStr = data['level'] as String;
+          final msg = data['message'] as String;
+          LogLevel level = LogLevel.info;
+          if (lvlStr == 'success') level = LogLevel.success;
+          if (lvlStr == 'warning') level = LogLevel.warning;
+          if (lvlStr == 'error') level = LogLevel.error;
+          if (lvlStr == 'debug') level = LogLevel.debug;
+          _log(level, msg);
+        case 'stats':
+          _bytesIn = data['bytesIn'] as int;
+          _bytesOut = data['bytesOut'] as int;
+          _peerConnected = data['peerConnected'] as bool;
+          notifyListeners();
+        case 'file_explorer_response':
+          final responseData = data['data'] as Map<String, dynamic>;
+          _handleTextMessage(jsonEncode(responseData));
+      }
+    }
+  }
+
+  void _syncTunnelsToTask() {
+    if (Platform.isAndroid && isConnected) {
+      FlutterForegroundTask.sendDataToTask({
+        'action': 'updateTunnels',
+        'tunnels': _tunnels.map((t) => t.toJson()).toList(),
+      });
+    }
+  }
+
   // ── Wire protocol constants ────────────────────────────────────────────────
   static const int _dataFrameType = 0x01;
   static const int _headerLength = 37;
@@ -84,14 +138,18 @@ class TunnelService extends ChangeNotifier {
       ..clear()
       ..addAll(tunnels);
     notifyListeners();
+    _syncTunnelsToTask();
   }
 
   void addTunnel(TunnelConfig config) {
     _tunnels.add(config);
     notifyListeners();
     if (isConnected && config.enabled) {
-      _startTunnelListener(config);
+      if (!Platform.isAndroid) {
+        _startTunnelListener(config);
+      }
     }
+    _syncTunnelsToTask();
   }
 
   void updateTunnel(TunnelConfig config) {
@@ -99,19 +157,27 @@ class TunnelService extends ChangeNotifier {
     if (idx == -1) return;
 
     // Stop old listener if running
-    _stopTunnelListener(config.id);
+    if (!Platform.isAndroid) {
+      _stopTunnelListener(config.id);
+    }
     _tunnels[idx] = config;
     notifyListeners();
 
     if (isConnected && config.enabled) {
-      _startTunnelListener(config);
+      if (!Platform.isAndroid) {
+        _startTunnelListener(config);
+      }
     }
+    _syncTunnelsToTask();
   }
 
   void removeTunnel(String id) {
-    _stopTunnelListener(id);
+    if (!Platform.isAndroid) {
+      _stopTunnelListener(id);
+    }
     _tunnels.removeWhere((t) => t.id == id);
     notifyListeners();
+    _syncTunnelsToTask();
   }
 
   /// Connect to the relay server and start all enabled tunnel listeners.
@@ -124,6 +190,26 @@ class TunnelService extends ChangeNotifier {
     _setState(TunnelConnectionState.connecting);
     _lastRelayUrl = relayUrl.trim();
     _lastToken = token;
+
+    if (Platform.isAndroid) {
+      final started = await FlutterForegroundTask.startService(
+        notificationTitle: 'TCP Tunnel Active',
+        notificationText: 'Tunnel is connected and running',
+        callback: startBackgroundTunnelCallback,
+      );
+      if (started is ServiceRequestSuccess) {
+        FlutterForegroundTask.sendDataToTask({
+          'action': 'connect',
+          'relayUrl': relayUrl,
+          'token': token,
+          'tunnels': _tunnels.map((t) => t.toJson()).toList(),
+        });
+      } else {
+        _log(LogLevel.error, 'Failed to start Android foreground service');
+        _setState(TunnelConnectionState.error, error: 'Foreground service failed to start');
+      }
+      return;
+    }
 
     var normalizedUrl = relayUrl.trim();
     if (!normalizedUrl.startsWith('ws://') && !normalizedUrl.startsWith('wss://')) {
@@ -170,8 +256,14 @@ class TunnelService extends ChangeNotifier {
     _log(LogLevel.info, 'Disconnecting...');
     _lastRelayUrl = null; // Clear credentials to suppress auto-reconnect
     _lastToken = null;
-    await _cleanup();
-    _setState(TunnelConnectionState.disconnected);
+    if (Platform.isAndroid) {
+      FlutterForegroundTask.sendDataToTask({'action': 'disconnect'});
+      await FlutterForegroundTask.stopService();
+      _setState(TunnelConnectionState.disconnected);
+    } else {
+      await _cleanup();
+      _setState(TunnelConnectionState.disconnected);
+    }
     _log(LogLevel.info, 'Disconnected');
   }
 
@@ -334,6 +426,7 @@ class TunnelService extends ChangeNotifier {
   // ── Tunnel listeners ───────────────────────────────────────────────────────
 
   void _startAllTunnelListeners() {
+    if (Platform.isAndroid) return;
     for (final tunnel in _tunnels.where((t) => t.enabled)) {
       _startTunnelListener(tunnel);
     }
@@ -398,9 +491,16 @@ class TunnelService extends ChangeNotifier {
   // ── Wire encoding ──────────────────────────────────────────────────────────
 
   void _send(String text) {
-    try {
-      _ws?.sink.add(text);
-    } catch (_) {}
+    if (Platform.isAndroid) {
+      FlutterForegroundTask.sendDataToTask({
+        'action': 'send_text',
+        'text': text,
+      });
+    } else {
+      try {
+        _ws?.sink.add(text);
+      } catch (_) {}
+    }
   }
 
   void _sendDataFrame(String channelId, List<int> data) {
@@ -627,6 +727,9 @@ class TunnelService extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (Platform.isAndroid) {
+      FlutterForegroundTask.removeTaskDataCallback(_onReceiveTaskData);
+    }
     _cleanup();
     super.dispose();
   }
