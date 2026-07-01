@@ -20,6 +20,8 @@ class BackgroundTunnelTaskHandler extends TaskHandler {
   String? _relayUrl;
   String? _token;
   List<dynamic> _tunnelsData = [];
+  bool _shouldReconnect = false;
+  Timer? _reconnectTimer;
   
   final Map<String, ServerSocket> _servers = {};
   final Map<String, Socket> _localSockets = {};
@@ -46,6 +48,7 @@ class BackgroundTunnelTaskHandler extends TaskHandler {
           _relayUrl = data['relayUrl'] as String?;
           _token = data['token'] as String?;
           _tunnelsData = data['tunnels'] as List<dynamic>? ?? [];
+          _shouldReconnect = true;
           _connect();
         case 'disconnect':
           _disconnect();
@@ -104,17 +107,22 @@ class BackgroundTunnelTaskHandler extends TaskHandler {
     } catch (e) {
       _log('error', 'Failed to connect: $e');
       _setState('error', error: e.toString());
+      _onDisconnected(e.toString());
     }
   }
 
   void _handleMessage(dynamic data) {
-    if (data is String) {
-      _handleTextMessage(data);
-    } else {
-      final bytes = data is Uint8List ? data : Uint8List.fromList(data as List<int>);
-      if (bytes.isNotEmpty && bytes[0] == _dataFrameType && bytes.length >= _headerLength) {
-        _handleDataFrame(bytes);
+    try {
+      if (data is String) {
+        _handleTextMessage(data);
+      } else {
+        final bytes = data is Uint8List ? data : Uint8List.fromList(data as List<int>);
+        if (bytes.isNotEmpty && bytes[0] == _dataFrameType && bytes.length >= _headerLength) {
+          _handleDataFrame(bytes);
+        }
       }
+    } catch (e) {
+      _log('error', 'Error in message handler: $e');
     }
   }
 
@@ -168,10 +176,12 @@ class BackgroundTunnelTaskHandler extends TaskHandler {
       case 'file_download_chunk':
       case 'file_upload_response':
       case 'file_error':
-        FlutterForegroundTask.sendDataToMain({
-          'type': 'file_explorer_response',
-          'data': msg,
-        });
+        try {
+          FlutterForegroundTask.sendDataToMain({
+            'type': 'file_explorer_response',
+            'data': msg,
+          });
+        } catch (_) {}
     }
   }
 
@@ -291,9 +301,20 @@ class BackgroundTunnelTaskHandler extends TaskHandler {
     _setState('disconnected');
     _peerConnected = false;
     _notifyStats();
+
+    if (_shouldReconnect && _relayUrl != null && _token != null) {
+      _log('info', 'Auto-reconnecting in 5 seconds...');
+      _reconnectTimer?.cancel();
+      _reconnectTimer = Timer(const Duration(seconds: 5), () {
+        if (_shouldReconnect) {
+          _connect();
+        }
+      });
+    }
   }
 
   Future<void> _cleanup() async {
+    _reconnectTimer?.cancel();
     await _wsSub?.cancel();
     _wsSub = null;
     await _ws?.sink.close();
@@ -311,35 +332,42 @@ class BackgroundTunnelTaskHandler extends TaskHandler {
   }
 
   Future<void> _disconnect() async {
+    _shouldReconnect = false;
     await _cleanup();
     _setState('disconnected');
     _log('info', 'Disconnected');
   }
 
   void _setState(String state, {String? error}) {
-    FlutterForegroundTask.sendDataToMain({
-      'type': 'state',
-      'value': state,
-      'error': error,
-    });
+    try {
+      FlutterForegroundTask.sendDataToMain({
+        'type': 'state',
+        'value': state,
+        'error': error,
+      });
+    } catch (_) {}
   }
 
   void _log(String level, String message) {
-    FlutterForegroundTask.sendDataToMain({
-      'type': 'log',
-      'level': level,
-      'message': message,
-    });
+    try {
+      FlutterForegroundTask.sendDataToMain({
+        'type': 'log',
+        'level': level,
+        'message': message,
+      });
+    } catch (_) {}
   }
 
   void _notifyStats() {
-    FlutterForegroundTask.sendDataToMain({
-      'type': 'stats',
-      'bytesIn': _bytesIn,
-      'bytesOut': _bytesOut,
-      'activeChannels': _localSockets.length,
-      'peerConnected': _peerConnected,
-    });
+    try {
+      FlutterForegroundTask.sendDataToMain({
+        'type': 'stats',
+        'bytesIn': _bytesIn,
+        'bytesOut': _bytesOut,
+        'activeChannels': _localSockets.length,
+        'peerConnected': _peerConnected,
+      });
+    } catch (_) {}
   }
 
   @override
