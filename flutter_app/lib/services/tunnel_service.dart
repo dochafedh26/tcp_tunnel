@@ -6,7 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:flutter_background/flutter_background.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import '../models/log_entry.dart';
 import '../models/tunnel_config.dart';
@@ -189,9 +189,11 @@ class TunnelService extends ChangeNotifier {
         _setState(TunnelConnectionState.connected);
         _startAllTunnelListeners();
         if (Platform.isAndroid) {
-          FlutterBackground.enableBackgroundExecution().catchError((e) {
-            _log(LogLevel.warning, 'Failed to enable background execution: $e');
-            return false;
+          FlutterForegroundTask.startService(
+            notificationTitle: 'TCP Tunnel Active',
+            notificationText: 'Tunnel is connected and running',
+          ).then((_) {}).catchError((e) {
+            _log(LogLevel.warning, 'Failed to start foreground service: $e');
           });
         }
 
@@ -414,7 +416,9 @@ class TunnelService extends ChangeNotifier {
 
   Future<void> _cleanup() async {
     if (Platform.isAndroid) {
-      FlutterBackground.disableBackgroundExecution().catchError((_) => false);
+      try {
+        await FlutterForegroundTask.stopService();
+      } catch (_) {}
     }
     await _wsSub?.cancel();
     _wsSub = null;

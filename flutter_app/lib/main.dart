@@ -2,7 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
-import 'package:flutter_background/flutter_background.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import 'models/tunnel_config.dart';
@@ -21,14 +21,25 @@ void main() async {
     // Request notification permission (required for Android 13+)
     await Permission.notification.request();
 
-    const androidConfig = FlutterBackgroundAndroidConfig(
-      notificationTitle: "TCP Tunnel Active",
-      notificationText: "Tunnel is running in the background",
-      notificationImportance: AndroidNotificationImportance.normal,
-      notificationIcon: AndroidResource(name: 'ic_launcher', defType: 'mipmap'),
-      enableWifiLock: true,
+    // Configure flutter_foreground_task — runs a proper Android Foreground
+    // Service that survives Home button / app switching.
+    FlutterForegroundTask.init(
+      androidNotificationOptions: AndroidNotificationOptions(
+        channelId: 'tcp_tunnel_channel',
+        channelName: 'TCP Tunnel',
+        channelDescription: 'Keeps the TCP tunnel connected in the background',
+        channelImportance: NotificationChannelImportance.LOW,
+        priority: NotificationPriority.LOW,
+      ),
+      iosNotificationOptions: const IOSNotificationOptions(
+        showNotification: false,
+      ),
+      foregroundTaskOptions: ForegroundTaskOptions(
+        eventAction: ForegroundTaskEventAction.nothing(),
+        autoRunOnBoot: false,
+        allowWifiLock: true,
+      ),
     );
-    await FlutterBackground.initialize(androidConfig: androidConfig);
   }
 
   final settings = SettingsService();
