@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_background/flutter_background.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import 'models/tunnel_config.dart';
 import 'services/settings_service.dart';
@@ -17,11 +18,15 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   if (Platform.isAndroid) {
+    // Request notification permission (required for Android 13+)
+    await Permission.notification.request();
+
     const androidConfig = FlutterBackgroundAndroidConfig(
       notificationTitle: "TCP Tunnel Active",
       notificationText: "Tunnel is running in the background",
       notificationImportance: AndroidNotificationImportance.normal,
       notificationIcon: AndroidResource(name: 'ic_launcher', defType: 'mipmap'),
+      enableWifiLock: true,
     );
     await FlutterBackground.initialize(androidConfig: androidConfig);
   }
