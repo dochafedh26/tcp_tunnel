@@ -196,6 +196,7 @@ class TunnelService extends ChangeNotifier {
         notificationTitle: 'TCP Tunnel Active',
         notificationText: 'Tunnel is connected and running',
         callback: startBackgroundTunnelCallback,
+        serviceTypes: [ForegroundServiceTypes.dataSync],
       );
       if (started is ServiceRequestSuccess) {
         FlutterForegroundTask.sendDataToTask({
@@ -298,6 +299,7 @@ class TunnelService extends ChangeNotifier {
           FlutterForegroundTask.startService(
             notificationTitle: 'TCP Tunnel Active',
             notificationText: 'Tunnel is connected and running',
+            serviceTypes: [ForegroundServiceTypes.dataSync],
           ).then((_) {}).catchError((e) {
             _log(LogLevel.warning, 'Failed to start foreground service: $e');
           });
