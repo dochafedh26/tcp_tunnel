@@ -103,7 +103,8 @@ void main(List<String> arguments) async {
     exit(0);
   }
 
-  final configFile = File('agent_settings.json');
+  final exeDir = File(Platform.resolvedExecutable).parent.path;
+  final configFile = File('$exeDir/agent_settings.json');
   Map<String, dynamic> configJson = {};
   if (configFile.existsSync()) {
     try {
@@ -484,12 +485,12 @@ Future<void> _handleSilentInstall() async {
   }
 
   // 5. Generate Service XML Configuration
-  final xmlContent = r'''<service>
+  final xmlContent = '''<service>
   <id>tcp-tunnel-agent</id>
   <name>TCP Tunnel Agent</name>
   <description>Relays TCP connections through the remote WebSocket tunnel</description>
-  <executable>C:\tcp_tunnel_agent\agent.exe</executable>
-  <arguments>--relay wss://tcptunnel-production.up.railway.app</arguments>
+  <executable>C:\\tcp_tunnel_agent\\agent.exe</executable>
+  <arguments>--relay wss://tcptunnel-production.up.railway.app --token $token</arguments>
   <log mode="roll-by-size">
     <sizeThreshold>10240</sizeThreshold> <!-- 10 MB -->
     <keepFiles>5</keepFiles>
