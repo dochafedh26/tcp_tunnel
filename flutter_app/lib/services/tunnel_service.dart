@@ -834,7 +834,7 @@ class TunnelService extends ChangeNotifier {
     return completer.future;
   }
 
-  Future<void> triggerRemotePrint(String remoteFilePath, String printerName) async {
+  Future<void> triggerRemotePrint(String remoteFilePath, String printerName, {bool deleteAfter = false}) async {
     if (!isConnected) throw Exception('Not connected to relay');
     final requestId = _uuid.v4();
     final completer = Completer<void>();
@@ -845,6 +845,7 @@ class TunnelService extends ChangeNotifier {
       'requestId': requestId,
       'filePath': remoteFilePath,
       'printerName': printerName,
+      'deleteAfter': deleteAfter,
     }));
 
     return completer.future;

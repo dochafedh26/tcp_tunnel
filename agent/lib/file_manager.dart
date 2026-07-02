@@ -40,6 +40,9 @@ class FileManager {
     return p.canonicalize(fullPath);
   }
 
+  /// Exposes the absolute canonical path resolution utility publicly.
+  String resolvePath(String requestedPath) => _safeResolve(requestedPath);
+
   /// Lists contents of a directory. Returns drive letters if requestedPath is empty on Windows.
   List<Map<String, dynamic>> listDirectory(String requestedPath) {
     if (requestedPath.trim().isEmpty) {

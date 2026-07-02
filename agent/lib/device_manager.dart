@@ -112,27 +112,72 @@ class DeviceManager {
     final list = <Map<String, dynamic>>[];
     try {
       if (Platform.isWindows) {
-        final result = await Process.run('powershell', [
+        final Set<String> printerNames = {};
+        final Map<String, bool> defaultMap = {};
+
+        // 1. Query Win32_Printer (local user printers)
+        final resultWmi = await Process.run('powershell', [
           '-Command',
-          'Get-CimInstance Win32_Printer | Select-Object Name, Default, PrinterStatus | ConvertTo-Json'
+          'Get-CimInstance Win32_Printer | Select-Object Name, Default | ConvertTo-Json'
         ]);
-        if (result.exitCode == 0 && result.stdout.toString().trim().isNotEmpty) {
-          final decoded = jsonDecode(result.stdout.toString());
-          void addPrinterItem(Map<dynamic, dynamic> item) {
-            list.add({
-              'name': item['Name'] ?? 'Unknown Printer',
-              'status': item['PrinterStatus'] == 3 ? 'Idle' : 'Offline',
-              'isDefault': item['Default'] ?? false,
-              'type': 'Local',
-            });
-          }
-          if (decoded is List) {
-            for (final item in decoded) {
-              if (item is Map) addPrinterItem(item);
+        if (resultWmi.exitCode == 0 && resultWmi.stdout.toString().trim().isNotEmpty) {
+          try {
+            final decoded = jsonDecode(resultWmi.stdout.toString());
+            void processItem(Map<dynamic, dynamic> item) {
+              final name = item['Name'] as String?;
+              if (name != null && name.isNotEmpty) {
+                printerNames.add(name);
+                if (item['Default'] == true) {
+                  defaultMap[name] = true;
+                }
+              }
             }
-          } else if (decoded is Map) {
-            addPrinterItem(decoded);
-          }
+            if (decoded is List) {
+              for (final item in decoded) {
+                if (item is Map) processItem(item);
+              }
+            } else if (decoded is Map) {
+              processItem(decoded);
+            }
+          } catch (_) {}
+        }
+
+        // 2. Query HKLM registry (machine-wide system and USB printers)
+        final resultReg = await Process.run('powershell', [
+          '-Command',
+          'Get-ItemProperty -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Print\\Printers\\*" | Select-Object PSChildName | ConvertTo-Json'
+        ]);
+        if (resultReg.exitCode == 0 && resultReg.stdout.toString().trim().isNotEmpty) {
+          try {
+            final decoded = jsonDecode(resultReg.stdout.toString());
+            void processRegItem(Map<dynamic, dynamic> item) {
+              final name = item['PSChildName'] as String?;
+              if (name != null && name.isNotEmpty) {
+                printerNames.add(name);
+              }
+            }
+            if (decoded is List) {
+              for (final item in decoded) {
+                if (item is Map) processRegItem(item);
+              }
+            } else if (decoded is Map) {
+              processRegItem(decoded);
+            }
+          } catch (_) {}
+        }
+
+        // 3. Fallback default if none set
+        if (defaultMap.isEmpty && printerNames.isNotEmpty) {
+          defaultMap[printerNames.first] = true;
+        }
+
+        for (final name in printerNames) {
+          list.add({
+            'name': name,
+            'status': 'Idle',
+            'isDefault': defaultMap[name] ?? false,
+            'type': 'Local',
+          });
         }
       } else if (Platform.isLinux) {
         final result = await Process.run('lpstat', ['-p', '-d']);

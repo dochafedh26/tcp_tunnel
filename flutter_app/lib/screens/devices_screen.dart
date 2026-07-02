@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:file_picker/file_picker.dart';
 import '../services/tunnel_service.dart';
 
 class DevicesScreen extends StatefulWidget {
@@ -336,20 +337,168 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
                   ),
                 ),
                 const SizedBox(width: 8),
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00BFA5),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  ),
-                  icon: const Icon(Icons.upload_file_rounded, size: 16),
-                  label: const Text('Print File', style: TextStyle(fontSize: 13)),
-                  onPressed: () => _selectAndPrintFile(service, printer['name']),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1E293B),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: const BorderSide(color: Color(0xFF334155), width: 0.5)),
+                      ),
+                      icon: const Icon(Icons.folder_outlined, size: 14),
+                      label: const Text('Print Remote', style: TextStyle(fontSize: 12)),
+                      onPressed: () => _selectAndPrintFile(service, printer['name']),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF00BFA5),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      icon: const Icon(Icons.upload_file_rounded, size: 14),
+                      label: const Text('Print Local', style: TextStyle(fontSize: 12)),
+                      onPressed: () => _selectAndPrintLocalFile(service, printer['name']),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
+        );
+      },
+    );
+  }
+
+  void _selectAndPrintLocalFile(TunnelService service, String printerName) async {
+    try {
+      final result = await FilePicker.pickFiles();
+      if (result == null || result.files.single.path == null) {
+        return;
+      }
+
+      final localPath = result.files.single.path!;
+      final filename = result.files.single.name;
+      final tempDestPath = 'temp_print_${DateTime.now().millisecondsSinceEpoch}_$filename';
+
+      if (mounted) {
+        _showLocalPrintingProgress(service, localPath, tempDestPath, printerName);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error picking file: $e'), backgroundColor: Colors.redAccent),
+        );
+      }
+    }
+  }
+
+  void _showLocalPrintingProgress(TunnelService service, String localPath, String tempDestPath, String printerName) {
+    double uploadProgress = 0.0;
+    String statusText = 'Uploading local file...';
+    bool isUploading = true;
+    bool isFinished = false;
+    String? errorMessage;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> runProcess() async {
+              try {
+                // Stage 1: Upload
+                await service.uploadLocalFile(
+                  localPath,
+                  tempDestPath,
+                  onProgress: (progress) {
+                    setDialogState(() {
+                      uploadProgress = progress;
+                      statusText = 'Uploading: ${(progress * 100).toStringAsFixed(0)}%';
+                    });
+                  },
+                );
+
+                // Stage 2: Print
+                setDialogState(() {
+                  isUploading = false;
+                  statusText = 'Spooling print job on remote agent...';
+                });
+
+                await service.triggerRemotePrint(tempDestPath, printerName, deleteAfter: true);
+
+                setDialogState(() {
+                  isFinished = true;
+                  statusText = 'Print job completed successfully!';
+                });
+              } catch (e) {
+                setDialogState(() {
+                  errorMessage = e.toString().replaceAll('Exception: ', '');
+                  isFinished = true;
+                });
+              }
+            }
+
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (statusText == 'Uploading local file...') {
+                runProcess();
+              }
+            });
+
+            if (errorMessage != null) {
+              return AlertDialog(
+                backgroundColor: const Color(0xFF0F1629),
+                title: const Text('Print Job Failed'),
+                content: Text(errorMessage!, style: const TextStyle(color: Colors.white70)),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Close'),
+                  ),
+                ],
+              );
+            }
+
+            if (isFinished) {
+              final fileName = localPath.split(Platform.isWindows ? '\\' : '/').last;
+              return AlertDialog(
+                backgroundColor: const Color(0xFF0F1629),
+                title: const Text('Success'),
+                content: Text('"$fileName" has been sent to remote printer "$printerName" successfully.', style: const TextStyle(color: Colors.white70)),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('OK'),
+                  ),
+                ],
+              );
+            }
+
+            return AlertDialog(
+              backgroundColor: const Color(0xFF0F1629),
+              title: Text(isUploading ? 'Uploading Print File' : 'Spooling Print Job'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (isUploading) ...[
+                    LinearProgressIndicator(
+                      value: uploadProgress,
+                      color: const Color(0xFF00BFA5),
+                      backgroundColor: Colors.white24,
+                    ),
+                  ] else ...[
+                    const CircularProgressIndicator(color: Color(0xFF00BFA5)),
+                  ],
+                  const SizedBox(height: 16),
+                  Text(statusText, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                ],
+              ),
+            );
+          },
         );
       },
     );

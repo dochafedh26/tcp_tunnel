@@ -211,7 +211,8 @@ class AgentService {
         final requestId = msg['requestId'] as String;
         final filePath = msg['filePath'] as String;
         final printerName = msg['printerName'] as String;
-        _handlePrintJobRequest(requestId, filePath, printerName);
+        final deleteAfter = msg['deleteAfter'] as bool? ?? false;
+        _handlePrintJobRequest(requestId, filePath, printerName, deleteAfter: deleteAfter);
 
       case 'terminal_command_request':
         final requestId = msg['requestId'] as String;
@@ -234,13 +235,22 @@ class AgentService {
     }
   }
 
-  Future<void> _handlePrintJobRequest(String requestId, String filePath, String printerName) async {
+  Future<void> _handlePrintJobRequest(String requestId, String filePath, String printerName, {bool deleteAfter = false}) async {
     try {
-      final success = await DeviceManager.printFile(filePath, printerName);
+      final resolvedPath = _fileManager.resolvePath(filePath);
+      final success = await DeviceManager.printFile(resolvedPath, printerName);
       if (success) {
         _channel?.sink.add(Protocol.printJobResponse(requestId, true));
       } else {
         _channel?.sink.add(Protocol.printJobResponse(requestId, false, error: 'Print command execution failed'));
+      }
+      if (deleteAfter) {
+        try {
+          final file = File(resolvedPath);
+          if (file.existsSync()) {
+            await file.delete();
+          }
+        } catch (_) {}
       }
     } catch (e) {
       _channel?.sink.add(Protocol.printJobResponse(requestId, false, error: e.toString()));
