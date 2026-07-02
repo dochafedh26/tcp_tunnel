@@ -187,12 +187,64 @@ class DeviceManager {
           ]);
           return result.exitCode == 0;
         } else {
-          // Generic PrintTo verb
+          // Send raw print bytes directly to the printer using Win32 spooler API
+          final csharpCode = r'''
+using System;
+using System.Runtime.InteropServices;
+public class RawPrinter {
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Ansi)]
+    public class DOCINFOA {
+        [MarshalAs(UnmanagedType.LPStr)] public string pDocName;
+        [MarshalAs(UnmanagedType.LPStr)] public string pOutputFile;
+        [MarshalAs(UnmanagedType.LPStr)] public string pDatatype;
+    }
+    [DllImport("winspool.Drv", EntryPoint="OpenPrinterA", SetLastError=true, CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    public static extern bool OpenPrinter([MarshalAs(UnmanagedType.LPStr)] string szPrinter, out IntPtr hPrinter, IntPtr pd);
+    [DllImport("winspool.Drv", EntryPoint="ClosePrinter", SetLastError=true, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    public static extern bool ClosePrinter(IntPtr hPrinter);
+    [DllImport("winspool.Drv", EntryPoint="StartDocPrinterA", SetLastError=true, CharSet=CharSet.Ansi, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    public static extern uint StartDocPrinter(IntPtr hPrinter, int level, [In, MarshalAs(UnmanagedType.LPStruct)] DOCINFOA di);
+    [DllImport("winspool.Drv", EntryPoint="EndDocPrinter", SetLastError=true, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    public static extern bool EndDocPrinter(IntPtr hPrinter);
+    [DllImport("winspool.Drv", EntryPoint="StartPagePrinter", SetLastError=true, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    public static extern bool StartPagePrinter(IntPtr hPrinter);
+    [DllImport("winspool.Drv", EntryPoint="EndPagePrinter", SetLastError=true, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    public static extern bool EndPagePrinter(IntPtr hPrinter);
+    [DllImport("winspool.Drv", EntryPoint="WritePrinter", SetLastError=true, ExactSpelling=true, CallingConvention=CallingConvention.StdCall)]
+    public static extern bool WritePrinter(IntPtr hPrinter, IntPtr pBytes, int dwCount, out int dwWritten);
+    
+    public static bool SendFileToPrinter(string szPrinterName, string szFileName) {
+        IntPtr hPrinter = new IntPtr(0);
+        DOCINFOA di = new DOCINFOA();
+        di.pDocName = "RAW Print Job";
+        di.pDatatype = "RAW";
+        if (OpenPrinter(szPrinterName, out hPrinter, IntPtr.Zero)) {
+            if (StartDocPrinter(hPrinter, 1, di) != 0) {
+                if (StartPagePrinter(hPrinter)) {
+                    byte[] bytes = System.IO.File.ReadAllBytes(szFileName);
+                    IntPtr pUnmanagedBytes = Marshal.AllocCoTaskMem(bytes.Length);
+                    Marshal.Copy(bytes, 0, pUnmanagedBytes, bytes.Length);
+                    int dwWritten = 0;
+                    bool success = WritePrinter(hPrinter, pUnmanagedBytes, bytes.Length, out dwWritten);
+                    Marshal.FreeCoTaskMem(pUnmanagedBytes);
+                    EndPagePrinter(hPrinter);
+                    EndDocPrinter(hPrinter);
+                    ClosePrinter(hPrinter);
+                    return success;
+                }
+                EndDocPrinter(hPrinter);
+            }
+            ClosePrinter(hPrinter);
+        }
+        return false;
+    }
+}
+''';
           final result = await Process.run('powershell', [
             '-Command',
-            'Start-Process -FilePath "$filePath" -Verb PrintTo -ArgumentList "$printerName" -Wait -NoNewWindow'
+            'Add-Type -TypeDefinition @"\n$csharpCode\n"@; [RawPrinter]::SendFileToPrinter("$printerName", "$filePath")'
           ]);
-          return result.exitCode == 0;
+          return result.exitCode == 0 && result.stdout.toString().trim().toLowerCase() == 'true';
         }
       } else if (Platform.isLinux) {
         final result = await Process.run('lp', ['-d', printerName, filePath]);

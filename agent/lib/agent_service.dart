@@ -30,6 +30,9 @@ class AgentService {
   /// Queued data frames for channels that are currently connecting.
   final Map<String, List<List<int>>> _pendingData = {};
 
+  /// Active RAW TCP print servers keyed by port.
+  final Map<int, ServerSocket> _activePrintServers = {};
+
   // ── Stats ─────────────────────────────────────────────────────────────────
   int bytesReceived = 0;
   int bytesSent = 0;
@@ -45,6 +48,10 @@ class AgentService {
   /// Start the agent with automatic reconnection.
   Future<void> start() async {
     _running = true;
+
+    // Start virtual RAW TCP print servers for USB printers
+    _startPrinterServers();
+
     while (_running) {
       try {
         await _connect();
@@ -64,6 +71,7 @@ class AgentService {
     _closeAllSockets();
     _channel?.sink.close();
     _channel = null;
+    _stopPrinterServers();
   }
 
   // ── Connection ────────────────────────────────────────────────────────────
@@ -403,5 +411,95 @@ class AgentService {
     }
     _sockets.clear();
     _pendingData.clear();
+  }
+
+  Future<void> _startPrinterServers() async {
+    try {
+      final printers = await DeviceManager.getPrinters();
+      if (printers.isEmpty) {
+        _log.info('No system printers found to expose.');
+        return;
+      }
+
+      // Sort printers so the default one is first
+      printers.sort((a, b) {
+        final aDefault = a['isDefault'] as bool? ?? false;
+        final bDefault = b['isDefault'] as bool? ?? false;
+        if (aDefault && !bDefault) return -1;
+        if (!aDefault && bDefault) return 1;
+        return (a['name'] as String).compareTo(b['name'] as String);
+      });
+
+      int port = 9100;
+      for (final printer in printers) {
+        final printerName = printer['name'] as String;
+        final currentPort = port;
+        port++;
+
+        try {
+          final server = await ServerSocket.bind('127.0.0.1', currentPort);
+          _activePrintServers[currentPort] = server;
+          _log.info('Exposed printer "$printerName" as RAW print server on 127.0.0.1:$currentPort');
+
+          server.listen((socket) async {
+            _log.info('Received RAW print job connection for "$printerName" on port $currentPort');
+            final bytes = <int>[];
+            socket.listen(
+              (data) {
+                bytes.addAll(data);
+              },
+              onDone: () async {
+                socket.close();
+                if (bytes.isEmpty) {
+                  _log.warning('Print job socket closed with 0 bytes.');
+                  return;
+                }
+
+                _log.info('Received ${bytes.length} bytes of raw print data. Spooling to printer "$printerName"...');
+
+                // Save to a temporary file
+                final tempDir = Directory.systemTemp;
+                final tempFile = File('${tempDir.path}/raw_print_${DateTime.now().millisecondsSinceEpoch}.prn');
+                try {
+                  await tempFile.writeAsBytes(bytes);
+                  final success = await DeviceManager.printFile(tempFile.path, printerName);
+                  if (success) {
+                    _log.info('Successfully spooled raw print job to "$printerName"');
+                  } else {
+                    _log.severe('Failed to spool raw print job to "$printerName"');
+                  }
+                } catch (e) {
+                  _log.severe('Error spooling print job to "$printerName": $e');
+                } finally {
+                  try {
+                    if (tempFile.existsSync()) {
+                      await tempFile.delete();
+                    }
+                  } catch (_) {}
+                }
+              },
+              onError: (e) {
+                _log.severe('Socket error on print server port $currentPort: $e');
+                socket.close();
+              }
+            );
+          });
+        } catch (e) {
+          _log.severe('Failed to bind print server on port $currentPort for "$printerName": $e');
+        }
+      }
+    } catch (e) {
+      _log.severe('Failed to set up printer servers: $e');
+    }
+  }
+
+  void _stopPrinterServers() {
+    for (final server in _activePrintServers.values) {
+      try {
+        server.close();
+      } catch (_) {}
+    }
+    _activePrintServers.clear();
+    _log.info('Stopped all local print servers.');
   }
 }
