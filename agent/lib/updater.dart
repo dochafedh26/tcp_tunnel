@@ -36,9 +36,15 @@ class AgentUpdater {
         final assets = json['assets'] as List<dynamic>;
         
         // Find the right asset based on Operating System
-        String targetAssetName = Platform.isWindows ? 'agent-windows.exe' : 'agent-linux';
         final asset = assets.firstWhere(
-          (a) => a['name'] == targetAssetName,
+          (a) {
+            final String name = a['name'] as String? ?? '';
+            if (Platform.isWindows) {
+              return name == 'agent-windows.exe' || (name.startsWith('agent_windows_') && name.endsWith('.exe'));
+            } else {
+              return name == 'agent-linux' || (name.startsWith('agent_linux_') && !name.endsWith('.exe'));
+            }
+          },
           orElse: () => null,
         );
 

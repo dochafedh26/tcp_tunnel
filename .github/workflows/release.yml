@@ -74,9 +74,9 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         include:
           - os: ubuntu-latest
-            output-name: agent-linux
+            platform-suffix: linux
           - os: windows-latest
-            output-name: agent-windows.exe
+            platform-suffix: windows.exe
 
     steps:
       - name: Checkout Code
@@ -102,14 +102,24 @@ jobs:
         working-directory: ./agent
 
       - name: Compile Executable
-        run: dart compile exe bin/agent.dart -o ${{ matrix.output-name }}
+        shell: bash
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          VERSION="${TAG_NAME#v}"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            dart compile exe bin/agent.dart -o "agent_windows_$VERSION.exe"
+          else
+            dart compile exe bin/agent.dart -o "agent_linux_$VERSION"
+          fi
         working-directory: ./agent
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.output-name }}
-          path: ./agent/${{ matrix.output-name }}
+          name: ${{ matrix.os == 'windows-latest' && 'agent-windows-binary' || 'agent-linux-binary' }}
+          path: |
+            ./agent/agent_windows_*.exe
+            ./agent/agent_linux_*
 
   # ── BUILD THE FLUTTER APP ──────────────────────────────────────────────────
   build-flutter:
@@ -124,16 +134,13 @@ jobs:
         include:
           - target: android
             os: ubuntu-latest
-            output-path: build/app/outputs/flutter-apk/tcp_tunnel_client.apk
-            release-name: tcp_tunnel_client.apk
+            output-path: build/app/outputs/flutter-apk
           - target: windows
             os: windows-latest
             output-path: build/windows/x64/runner/Release
-            release-name: tcp_tunnel_client-windows.zip
           - target: linux
             os: ubuntu-latest
             output-path: build/linux/x64/release/bundle
-            release-name: tcp_tunnel_client-linux.tar.gz
 
     steps:
       - name: Checkout Code
@@ -184,8 +191,10 @@ jobs:
       - name: Build Android APK
         if: matrix.target == 'android'
         run: |
+          TAG_NAME="${{ github.ref_name }}"
+          VERSION="${TAG_NAME#v}"
           flutter build apk --release
-          mv build/app/outputs/flutter-apk/app-release.apk build/app/outputs/flutter-apk/tcp_tunnel_client.apk
+          mv build/app/outputs/flutter-apk/app-release.apk "build/app/outputs/flutter-apk/tcp_tunnel_client_android_$VERSION.apk"
         working-directory: ./flutter_app
 
       - name: Build Windows App
@@ -203,22 +212,28 @@ jobs:
         if: matrix.target == 'windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path ${{ matrix.output-path }}/* -DestinationPath ${{ matrix.release-name }}
+          $TAG_NAME = "${{ github.ref_name }}"
+          $VERSION = $TAG_NAME.SubString(1)
+          Compress-Archive -Path ${{ matrix.output-path }}/* -DestinationPath "tcp_tunnel_client_windows_$VERSION.zip"
         working-directory: ./flutter_app
 
       # Compress Linux build folder to .tar.gz
       - name: Package Linux Build
         if: matrix.target == 'linux'
         run: |
-          tar -czf ${{ matrix.release-name }} -C ${{ matrix.output-path }} .
+          TAG_NAME="${{ github.ref_name }}"
+          VERSION="${TAG_NAME#v}"
+          tar -czf "tcp_tunnel_client_linux_$VERSION.tar.gz" -C ${{ matrix.output-path }} .
         working-directory: ./flutter_app
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.release-name }}
+          name: ${{ matrix.target }}-client-binary
           path: |
-            ${{ matrix.target == 'android' && format('./flutter_app/{0}', matrix.output-path) || format('./flutter_app/{0}', matrix.release-name) }}
+            ./flutter_app/build/app/outputs/flutter-apk/tcp_tunnel_client_android_*.apk
+            ./flutter_app/tcp_tunnel_client_windows_*.zip
+            ./flutter_app/tcp_tunnel_client_linux_*.tar.gz
 
   # ── CREATE GITHUB RELEASE & UPLOAD ASSETS ──────────────────────────────────
   create-release:
@@ -239,23 +254,12 @@ jobs:
         id: release_files
         shell: bash
         run: |
-          FILES=""
-          if [ -d "agent-linux" ]; then
-            FILES="${FILES}agent-linux/agent-linux"$'\n'
-          fi
-          if [ -d "agent-windows.exe" ]; then
-            FILES="${FILES}agent-windows.exe/agent-windows.exe"$'\n'
-          fi
-          if [ -d "tcp_tunnel_client.apk" ]; then
-            FILES="${FILES}tcp_tunnel_client.apk/tcp_tunnel_client.apk"$'\n'
-          fi
-          if [ -d "tcp_tunnel_client-windows.zip" ]; then
-            FILES="${FILES}tcp_tunnel_client-windows.zip/tcp_tunnel_client-windows.zip"$'\n'
-          fi
-          if [ -d "tcp_tunnel_client-linux.tar.gz" ]; then
-            FILES="${FILES}tcp_tunnel_client-linux.tar.gz/tcp_tunnel_client-linux.tar.gz"$'\n'
-          fi
-          FILES=$(echo -n "$FILES")
+          # Use find to locate all compiled executables, zips, apks, and tars recursively in downloaded dirs
+          FILES=$(find . -maxdepth 3 -type f \( -name "agent_*" -o -name "tcp_tunnel_client_*" \))
+          echo "Found release files:"
+          echo "$FILES"
+          
+          # Write to github output
           echo "files<<EOF" >> $GITHUB_OUTPUT
           echo "$FILES" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
