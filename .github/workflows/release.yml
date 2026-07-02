@@ -14,25 +14,53 @@ jobs:
     name: Check Changed Paths
     runs-on: ubuntu-latest
     outputs:
-      agent_changed: ${{ steps.filter.outputs.agent }}
-      flutter_changed: ${{ steps.filter.outputs.flutter }}
+      agent_changed: ${{ steps.detect.outputs.agent_changed }}
+      flutter_changed: ${{ steps.detect.outputs.flutter_changed }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Path Filter
-        uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            agent:
-              - 'agent/**'
-              - '.github/workflows/release.yml'
-            flutter:
-              - 'flutter_app/**'
-              - '.github/workflows/release.yml'
+      - name: Fetch Tags
+        run: git fetch --tags --force
+
+      - name: Detect Changes
+        id: detect
+        shell: bash
+        run: |
+          CURRENT_TAG="${{ github.ref_name }}"
+          echo "Current tag: $CURRENT_TAG"
+          
+          # Find the previous tag sorting by refname versioning
+          PREV_TAG=$(git tag --sort=-v:refname | grep -A 1 -E "^${CURRENT_TAG}$" | tail -n 1)
+          
+          # Fallback if first tag
+          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "$CURRENT_TAG" ]; then
+            PREV_TAG="HEAD~1"
+          fi
+          
+          echo "Comparing $PREV_TAG against HEAD"
+          
+          # Check diff names
+          CHANGED_FILES=$(git diff --name-only $PREV_TAG HEAD)
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+          
+          AGENT_CHANGED="false"
+          FLUTTER_CHANGED="false"
+          
+          if echo "$CHANGED_FILES" | grep -q -E "^agent/|^.github/workflows/release.yml"; then
+            AGENT_CHANGED="true"
+          fi
+          
+          if echo "$CHANGED_FILES" | grep -q -E "^flutter_app/|^.github/workflows/release.yml"; then
+            FLUTTER_CHANGED="true"
+          fi
+          
+          echo "agent_changed=$AGENT_CHANGED" >> $GITHUB_OUTPUT
+          echo "flutter_changed=$FLUTTER_CHANGED" >> $GITHUB_OUTPUT
+          echo "Result: agent_changed=$AGENT_CHANGED, flutter_changed=$FLUTTER_CHANGED"
 
   # ── BUILD THE DART AGENT ───────────────────────────────────────────────────
   build-agent:
