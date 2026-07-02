@@ -177,6 +177,8 @@ class BackgroundTunnelTaskHandler extends TaskHandler {
       case 'file_download_chunk':
       case 'file_upload_response':
       case 'file_error':
+      case 'device_list_response':
+      case 'print_job_response':
         try {
           FlutterForegroundTask.sendDataToMain({
             'type': 'file_explorer_response',

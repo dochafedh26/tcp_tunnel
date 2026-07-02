@@ -48,12 +48,23 @@ class TunnelService extends ChangeNotifier {
   final Map<String, Completer<void>> _activeUploadCompleters = {};
   final Map<String, Completer<bool>> _fileActionCompleters = {};
 
+  // ── Device/Printer Explorer State ──────────────────────────────────────────
+  final Map<String, Completer<Map<String, List<Map<String, dynamic>>>>> _deviceListCompleters = {};
+  final Map<String, Completer<void>> _printJobCompleters = {};
+
   // ── Stats ──────────────────────────────────────────────────────────────────
   int _bytesIn = 0;
   int _bytesOut = 0;
   int get bytesIn => _bytesIn;
   int get bytesOut => _bytesOut;
   int get activeChannels => _localSockets.length;
+
+  String? _requestedBrowsePath;
+  String? get requestedBrowsePath => _requestedBrowsePath;
+  set requestedBrowsePath(String? value) {
+    _requestedBrowsePath = value;
+    notifyListeners();
+  }
 
   // ── Logs ───────────────────────────────────────────────────────────────────
   final List<LogEntry> _logs = [];
@@ -411,6 +422,45 @@ class TunnelService extends ChangeNotifier {
         if (fileListCompleter != null) {
           fileListCompleter.completeError(Exception(message));
         }
+        final deviceListCompleter = _deviceListCompleters.remove(requestId);
+        if (deviceListCompleter != null) {
+          deviceListCompleter.completeError(Exception(message));
+        }
+        final printJobCompleter = _printJobCompleters.remove(requestId);
+        if (printJobCompleter != null) {
+          printJobCompleter.completeError(Exception(message));
+        }
+
+      case 'device_list_response':
+        final requestId = msg['requestId'] as String;
+        final success = msg['success'] as bool;
+        final error = msg['error'] as String?;
+        final usbDevices = List<Map<String, dynamic>>.from(msg['usbDevices'] as List? ?? []);
+        final printers = List<Map<String, dynamic>>.from(msg['printers'] as List? ?? []);
+        final completer = _deviceListCompleters.remove(requestId);
+        if (completer != null) {
+          if (success) {
+            completer.complete({
+              'usbDevices': usbDevices,
+              'printers': printers,
+            });
+          } else {
+            completer.completeError(Exception(error ?? 'Failed to list devices'));
+          }
+        }
+
+      case 'print_job_response':
+        final requestId = msg['requestId'] as String;
+        final success = msg['success'] as bool;
+        final error = msg['error'] as String?;
+        final completer = _printJobCompleters.remove(requestId);
+        if (completer != null) {
+          if (success) {
+            completer.complete();
+          } else {
+            completer.completeError(Exception(error ?? 'Print job failed'));
+          }
+        }
     }
   }
 
@@ -580,6 +630,16 @@ class TunnelService extends ChangeNotifier {
       completer.completeError(Exception('Disconnected'));
     }
     _fileActionCompleters.clear();
+
+    // Clean up device explorer state
+    for (final completer in _deviceListCompleters.values) {
+      completer.completeError(Exception('Disconnected'));
+    }
+    _deviceListCompleters.clear();
+    for (final completer in _printJobCompleters.values) {
+      completer.completeError(Exception('Disconnected'));
+    }
+    _printJobCompleters.clear();
   }
 
   void _log(LogLevel level, String message) {
@@ -725,6 +785,38 @@ class TunnelService extends ChangeNotifier {
       await openFile.close();
       _activeUploadCompleters.remove(requestId);
     }
+  }
+
+  // ── Remote Device Operations ────────────────────────────────────────────────
+
+  Future<Map<String, List<Map<String, dynamic>>>> fetchRemoteDevices() async {
+    if (!isConnected) throw Exception('Not connected to relay');
+    final requestId = _uuid.v4();
+    final completer = Completer<Map<String, List<Map<String, dynamic>>>>();
+    _deviceListCompleters[requestId] = completer;
+
+    _send(jsonEncode({
+      'type': 'device_list_request',
+      'requestId': requestId,
+    }));
+
+    return completer.future;
+  }
+
+  Future<void> triggerRemotePrint(String remoteFilePath, String printerName) async {
+    if (!isConnected) throw Exception('Not connected to relay');
+    final requestId = _uuid.v4();
+    final completer = Completer<void>();
+    _printJobCompleters[requestId] = completer;
+
+    _send(jsonEncode({
+      'type': 'print_job_request',
+      'requestId': requestId,
+      'filePath': remoteFilePath,
+      'printerName': printerName,
+    }));
+
+    return completer.future;
   }
 
   @override

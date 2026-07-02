@@ -378,6 +378,14 @@ class _FileExplorerScreenState extends State<FileExplorerScreen> {
   Widget build(BuildContext context) {
     final service = context.watch<TunnelService>();
 
+    if (service.requestedBrowsePath != null) {
+      final path = service.requestedBrowsePath!;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        service.requestedBrowsePath = null;
+        _loadDirectory(path);
+      });
+    }
+
     // ── Disconnected / Offline state ──────────────────────────────────────────
     if (!service.isConnected || !service.peerConnected) {
       return Scaffold(

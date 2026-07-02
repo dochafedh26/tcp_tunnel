@@ -73,6 +73,24 @@ class Protocol {
   static String fileError(String requestId, String message) =>
       jsonEncode({'type': 'file_error', 'requestId': requestId, 'message': message});
 
+  static String deviceListResponse(String requestId, bool success, List<Map<String, dynamic>> usbDevices, List<Map<String, dynamic>> printers, {String? error}) =>
+      jsonEncode({
+        'type': 'device_list_response',
+        'requestId': requestId,
+        'success': success,
+        'usbDevices': usbDevices,
+        'printers': printers,
+        'error': error,
+      });
+
+  static String printJobResponse(String requestId, bool success, {String? error}) =>
+      jsonEncode({
+        'type': 'print_job_response',
+        'requestId': requestId,
+        'success': success,
+        'error': error,
+      });
+
   // ── Binary frame codec ────────────────────────────────────────────────────
 
   /// Encode a [data] payload into a binary data frame for [channelId].

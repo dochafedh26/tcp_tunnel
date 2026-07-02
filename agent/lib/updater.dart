@@ -123,8 +123,8 @@ class AgentUpdater {
       break;
     }
 
-    if (response == null || response.statusCode != 200) {
-      throw Exception('Failed to download update, status code: ${response?.statusCode}');
+    if (response.statusCode != 200) {
+      throw Exception('Failed to download update, status code: ${response.statusCode}');
     }
     
     final tempFile = File(tempFilePath);

@@ -9,6 +9,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'file_manager.dart';
 import 'protocol.dart';
+import 'device_manager.dart';
 
 /// Manages the agent's WebSocket connection to the relay server and
 /// forwards TCP traffic between the relay and local work resources.
@@ -194,8 +195,41 @@ class AgentService {
           _channel?.sink.add(Protocol.fileUploadResponse(requestId, false, error: e.toString()));
         }
 
+      case 'device_list_request':
+        final requestId = msg['requestId'] as String;
+        _handleDeviceListRequest(requestId);
+
+      case 'print_job_request':
+        final requestId = msg['requestId'] as String;
+        final filePath = msg['filePath'] as String;
+        final printerName = msg['printerName'] as String;
+        _handlePrintJobRequest(requestId, filePath, printerName);
+
       default:
         _log.fine('Unhandled message type: $type');
+    }
+  }
+
+  Future<void> _handleDeviceListRequest(String requestId) async {
+    try {
+      final usbDevices = await DeviceManager.getUsbDevices();
+      final printers = await DeviceManager.getPrinters();
+      _channel?.sink.add(Protocol.deviceListResponse(requestId, true, usbDevices, printers));
+    } catch (e) {
+      _channel?.sink.add(Protocol.deviceListResponse(requestId, false, [], [], error: e.toString()));
+    }
+  }
+
+  Future<void> _handlePrintJobRequest(String requestId, String filePath, String printerName) async {
+    try {
+      final success = await DeviceManager.printFile(filePath, printerName);
+      if (success) {
+        _channel?.sink.add(Protocol.printJobResponse(requestId, true));
+      } else {
+        _channel?.sink.add(Protocol.printJobResponse(requestId, false, error: 'Print command execution failed'));
+      }
+    } catch (e) {
+      _channel?.sink.add(Protocol.printJobResponse(requestId, false, error: e.toString()));
     }
   }
 
