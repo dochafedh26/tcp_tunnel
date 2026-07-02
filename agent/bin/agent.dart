@@ -47,7 +47,9 @@ void main(List<String> arguments) async {
       help: 'Directory exposed to remote file explorer requests',
       defaultsTo: '',
     )
-    ..addFlag('help', abbr: 'h', negatable: false, help: 'Show this help');
+    ..addFlag('help', abbr: 'h', negatable: false, help: 'Show this help')
+    ..addFlag('install-service', negatable: false, help: 'Install and start the agent as a Windows Service')
+    ..addFlag('uninstall-service', negatable: false, help: 'Stop and uninstall the Windows Service');
 
   ArgResults args;
   try {
@@ -56,6 +58,15 @@ void main(List<String> arguments) async {
     stderr.writeln('Error: $e');
     stderr.writeln(parser.usage);
     exit(1);
+  }
+
+  if (args['install-service'] as bool) {
+    await _handleServiceInstall(arguments);
+    exit(0);
+  }
+  if (args['uninstall-service'] as bool) {
+    await _handleServiceUninstall(arguments);
+    exit(0);
   }
 
   if (args['help'] as bool) {
@@ -174,4 +185,173 @@ void main(List<String> arguments) async {
   });
 
   await agent.start();
+}
+
+Future<void> _handleServiceInstall(List<String> arguments) async {
+  if (!Platform.isWindows) {
+    stderr.writeln('Error: Windows Service installation is only supported on Windows.');
+    exit(1);
+  }
+
+  // 1. Check for Admin privileges
+  final checkAdmin = await Process.run('powershell', ['-Command', 'net session']);
+  if (checkAdmin.exitCode != 0) {
+    stdout.writeln('Requesting Administrator privileges to install service...');
+    final executable = Platform.resolvedExecutable;
+    
+    final argsList = List<String>.from(arguments);
+    if (!argsList.contains('--install-service')) {
+      argsList.add('--install-service');
+    }
+    final escapedArgs = argsList.map((a) => '"$a"').join(', ');
+    
+    final result = await Process.run('powershell', [
+      '-Command',
+      'Start-Process -FilePath "$executable" -ArgumentList $escapedArgs -Verb RunAs'
+    ]);
+    if (result.exitCode != 0) {
+      stderr.writeln('Failed to request elevation: ${result.stderr}');
+      exit(1);
+    }
+    exit(0);
+  }
+
+  // 2. Locate WinSW-x64.exe
+  final exeFile = File(Platform.resolvedExecutable);
+  final exeDir = exeFile.parent.path;
+  var winswSrc = File('$exeDir/WinSW-x64.exe');
+  if (!winswSrc.existsSync()) {
+    winswSrc = File('WinSW-x64.exe');
+  }
+  
+  if (!winswSrc.existsSync()) {
+    stderr.writeln('Error: WinSW-x64.exe wrapper not found in executable directory or current directory.');
+    exit(1);
+  }
+
+  // 3. Copy WinSW-x64.exe to tcp_tunnel_agent_service.exe
+  final serviceExe = File('$exeDir/tcp_tunnel_agent_service.exe');
+  try {
+    if (serviceExe.existsSync()) {
+      await Process.run(serviceExe.path, ['stop']);
+      await Process.run(serviceExe.path, ['uninstall']);
+    }
+    await winswSrc.copy(serviceExe.path);
+  } catch (e) {
+    stderr.writeln('Error copying service wrapper: $e');
+    exit(1);
+  }
+
+  // 4. Generate XML Configuration
+  final serviceArgs = arguments.where((arg) => arg != '--install-service' && arg != '-i').toList();
+  var targetExecutable = Platform.resolvedExecutable;
+  var targetArgs = serviceArgs;
+  
+  if (targetExecutable.endsWith('dart.exe') || targetExecutable.endsWith('dart')) {
+    final scriptPath = Platform.script.toFilePath();
+    targetArgs = [scriptPath, ...targetArgs];
+  }
+
+  final xmlContent = '''<service>
+  <id>tcp-tunnel-agent</id>
+  <name>TCP Tunnel Agent</name>
+  <description>Relays TCP connections through the remote WebSocket tunnel</description>
+  <executable>$targetExecutable</executable>
+  <arguments>${targetArgs.map((a) => '"$a"').join(' ')}</arguments>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold> <!-- 10 MB -->
+    <keepFiles>5</keepFiles>
+  </log>
+  <onfailure action="restart" delay="10 sec"/>
+</service>''';
+
+  final serviceXml = File('$exeDir/tcp_tunnel_agent_service.xml');
+  try {
+    await serviceXml.writeAsString(xmlContent);
+  } catch (e) {
+    stderr.writeln('Error writing service configuration: $e');
+    exit(1);
+  }
+
+  // 5. Register and start the service
+  stdout.writeln('Installing TCP Tunnel Agent service...');
+  final installResult = await Process.run(serviceExe.path, ['install']);
+  if (installResult.exitCode != 0) {
+    stderr.writeln('Failed to install service: ${installResult.stderr}\n${installResult.stdout}');
+    exit(1);
+  }
+
+  stdout.writeln('Starting TCP Tunnel Agent service...');
+  final startResult = await Process.run(serviceExe.path, ['start']);
+  if (startResult.exitCode != 0) {
+    stderr.writeln('Failed to start service: ${startResult.stderr}\n${startResult.stdout}');
+    exit(1);
+  }
+
+  stdout.writeln('====================================================');
+  stdout.writeln('Success: TCP Tunnel Agent service installed and started!');
+  stdout.writeln('The service will auto-start if the machine restarts.');
+  stdout.writeln('====================================================');
+}
+
+Future<void> _handleServiceUninstall(List<String> arguments) async {
+  if (!Platform.isWindows) {
+    stderr.writeln('Error: Windows Service operations are only supported on Windows.');
+    exit(1);
+  }
+
+  // 1. Check for Admin privileges
+  final checkAdmin = await Process.run('powershell', ['-Command', 'net session']);
+  if (checkAdmin.exitCode != 0) {
+    stdout.writeln('Requesting Administrator privileges to uninstall service...');
+    final executable = Platform.resolvedExecutable;
+    
+    final argsList = List<String>.from(arguments);
+    if (!argsList.contains('--uninstall-service')) {
+      argsList.add('--uninstall-service');
+    }
+    final escapedArgs = argsList.map((a) => '"$a"').join(', ');
+    
+    final result = await Process.run('powershell', [
+      '-Command',
+      'Start-Process -FilePath "$executable" -ArgumentList $escapedArgs -Verb RunAs'
+    ]);
+    if (result.exitCode != 0) {
+      stderr.writeln('Failed to request elevation: ${result.stderr}');
+      exit(1);
+    }
+    exit(0);
+  }
+
+  final exeFile = File(Platform.resolvedExecutable);
+  final exeDir = exeFile.parent.path;
+  final serviceExe = File('$exeDir/tcp_tunnel_agent_service.exe');
+  final serviceXml = File('$exeDir/tcp_tunnel_agent_service.xml');
+
+  if (!serviceExe.existsSync()) {
+    stderr.writeln('Error: tcp_tunnel_agent_service.exe not found. Is the service installed?');
+    exit(1);
+  }
+
+  stdout.writeln('Stopping TCP Tunnel Agent service...');
+  await Process.run(serviceExe.path, ['stop']);
+
+  stdout.writeln('Uninstalling TCP Tunnel Agent service...');
+  final uninstallResult = await Process.run(serviceExe.path, ['uninstall']);
+  if (uninstallResult.exitCode != 0) {
+    stderr.writeln('Warning: Failed to uninstall service entry: ${uninstallResult.stderr}');
+  }
+
+  // Clean up files
+  try {
+    if (serviceExe.existsSync()) await serviceExe.delete();
+    if (serviceXml.existsSync()) await serviceXml.delete();
+    stdout.writeln('Service files cleaned up successfully.');
+  } catch (e) {
+    stderr.writeln('Warning: Failed to delete service files: $e');
+  }
+
+  stdout.writeln('====================================================');
+  stdout.writeln('Success: TCP Tunnel Agent service uninstalled.');
+  stdout.writeln('====================================================');
 }
