@@ -52,6 +52,9 @@ class TunnelService extends ChangeNotifier {
   final Map<String, Completer<Map<String, List<Map<String, dynamic>>>>> _deviceListCompleters = {};
   final Map<String, Completer<void>> _printJobCompleters = {};
 
+  // ── Terminal Shell State ────────────────────────────────────────────────────
+  final Map<String, Completer<Map<String, dynamic>>> _terminalCommandCompleters = {};
+
   // ── Stats ──────────────────────────────────────────────────────────────────
   int _bytesIn = 0;
   int _bytesOut = 0;
@@ -430,6 +433,10 @@ class TunnelService extends ChangeNotifier {
         if (printJobCompleter != null) {
           printJobCompleter.completeError(Exception(message));
         }
+        final terminalCommandCompleter = _terminalCommandCompleters.remove(requestId);
+        if (terminalCommandCompleter != null) {
+          terminalCommandCompleter.completeError(Exception(message));
+        }
 
       case 'device_list_response':
         final requestId = msg['requestId'] as String;
@@ -459,6 +466,26 @@ class TunnelService extends ChangeNotifier {
             completer.complete();
           } else {
             completer.completeError(Exception(error ?? 'Print job failed'));
+          }
+        }
+
+      case 'terminal_command_response':
+        final requestId = msg['requestId'] as String;
+        final success = msg['success'] as bool;
+        final exitCode = msg['exitCode'] as int? ?? 0;
+        final stdout = msg['stdout'] as String? ?? '';
+        final stderr = msg['stderr'] as String? ?? '';
+        final error = msg['error'] as String?;
+        final completer = _terminalCommandCompleters.remove(requestId);
+        if (completer != null) {
+          if (success) {
+            completer.complete({
+              'exitCode': exitCode,
+              'stdout': stdout,
+              'stderr': stderr,
+            });
+          } else {
+            completer.completeError(Exception(error ?? 'Failed to execute terminal command'));
           }
         }
     }
@@ -640,6 +667,10 @@ class TunnelService extends ChangeNotifier {
       completer.completeError(Exception('Disconnected'));
     }
     _printJobCompleters.clear();
+    for (final completer in _terminalCommandCompleters.values) {
+      completer.completeError(Exception('Disconnected'));
+    }
+    _terminalCommandCompleters.clear();
   }
 
   void _log(LogLevel level, String message) {
@@ -814,6 +845,24 @@ class TunnelService extends ChangeNotifier {
       'requestId': requestId,
       'filePath': remoteFilePath,
       'printerName': printerName,
+    }));
+
+    return completer.future;
+  }
+
+  // ── Remote Terminal Operations ──────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> executeRemoteCommand(String command, String cwd) async {
+    if (!isConnected) throw Exception('Not connected to relay');
+    final requestId = _uuid.v4();
+    final completer = Completer<Map<String, dynamic>>();
+    _terminalCommandCompleters[requestId] = completer;
+
+    _send(jsonEncode({
+      'type': 'terminal_command_request',
+      'requestId': requestId,
+      'command': command,
+      'cwd': cwd,
     }));
 
     return completer.future;

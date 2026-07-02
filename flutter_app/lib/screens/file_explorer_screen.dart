@@ -4,6 +4,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../services/tunnel_service.dart';
+import 'terminal_screen.dart';
 
 class FileExplorerScreen extends StatefulWidget {
   const FileExplorerScreen({super.key});
@@ -570,6 +571,26 @@ class _FileExplorerScreenState extends State<FileExplorerScreen> {
             icon: const Icon(Icons.upload_file_outlined, color: Color(0xFF00BFA5), size: 20),
             onPressed: _showUploadDialog,
             tooltip: 'Upload File',
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            style: IconButton.styleFrom(
+              backgroundColor: const Color(0xFF0F1629),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+                side: const BorderSide(color: Color(0xFF1A2340)),
+              ),
+            ),
+            icon: const Icon(Icons.terminal_rounded, color: Color(0xFF00BFA5), size: 20),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => TerminalScreen(initialCwd: _currentPath),
+                ),
+              );
+            },
+            tooltip: 'Open Remote Terminal',
           ),
         ],
       ),

@@ -91,6 +91,17 @@ class Protocol {
         'error': error,
       });
 
+  static String terminalCommandResponse(String requestId, bool success, int exitCode, String stdout, String stderr, {String? error}) =>
+      jsonEncode({
+        'type': 'terminal_command_response',
+        'requestId': requestId,
+        'success': success,
+        'exitCode': exitCode,
+        'stdout': stdout,
+        'stderr': stderr,
+        'error': error,
+      });
+
   // ── Binary frame codec ────────────────────────────────────────────────────
 
   /// Encode a [data] payload into a binary data frame for [channelId].

@@ -205,6 +205,12 @@ class AgentService {
         final printerName = msg['printerName'] as String;
         _handlePrintJobRequest(requestId, filePath, printerName);
 
+      case 'terminal_command_request':
+        final requestId = msg['requestId'] as String;
+        final command = msg['command'] as String;
+        final cwd = msg['cwd'] as String;
+        _handleTerminalCommand(requestId, command, cwd);
+
       default:
         _log.fine('Unhandled message type: $type');
     }
@@ -230,6 +236,44 @@ class AgentService {
       }
     } catch (e) {
       _channel?.sink.add(Protocol.printJobResponse(requestId, false, error: e.toString()));
+    }
+  }
+
+  Future<void> _handleTerminalCommand(String requestId, String command, String cwd) async {
+    try {
+      final ProcessResult result;
+      final workingDir = cwd.trim().isEmpty ? sharedDir : cwd;
+      
+      if (Platform.isWindows) {
+        result = await Process.run(
+          'powershell.exe',
+          ['-NoProfile', '-NonInteractive', '-Command', command],
+          workingDirectory: workingDir,
+        );
+      } else {
+        result = await Process.run(
+          '/bin/sh',
+          ['-c', command],
+          workingDirectory: workingDir,
+        );
+      }
+      
+      _channel?.sink.add(Protocol.terminalCommandResponse(
+        requestId,
+        true,
+        result.exitCode,
+        result.stdout.toString(),
+        result.stderr.toString(),
+      ));
+    } catch (e) {
+      _channel?.sink.add(Protocol.terminalCommandResponse(
+        requestId,
+        false,
+        -1,
+        '',
+        '',
+        error: e.toString(),
+      ));
     }
   }
 
