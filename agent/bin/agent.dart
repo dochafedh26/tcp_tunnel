@@ -404,7 +404,7 @@ Future<void> _handleSilentInstall() async {
     targetDir.createSync(recursive: true);
   }
 
-  // 3. Locate WinSW-x64.exe
+  // 3. Locate or download WinSW-x64.exe
   final exeFile = File(Platform.resolvedExecutable);
   final exeDir = exeFile.parent.path;
   var winswSrc = File('$exeDir/WinSW-x64.exe');
@@ -412,35 +412,74 @@ Future<void> _handleSilentInstall() async {
     winswSrc = File('WinSW-x64.exe');
   }
 
-  if (!winswSrc.existsSync()) {
-    stderr.writeln('Error: WinSW-x64.exe wrapper not found in executable directory or current directory.');
-    exit(1);
-  }
-
-  // 4. Copy agent.exe, WinSW-x64.exe, and optionally agent_settings.json
   final targetAgentExe = File(r'C:\tcp_tunnel_agent\agent.exe');
   final targetWinSW = File(r'C:\tcp_tunnel_agent\WinSW-x64.exe');
   final targetServiceExe = File(r'C:\tcp_tunnel_agent\tcp_tunnel_agent_service.exe');
-  
-  try {
-    // Copy executable files
-    await exeFile.copy(targetAgentExe.path);
-    await winswSrc.copy(targetWinSW.path);
-    await winswSrc.copy(targetServiceExe.path);
 
-    // Copy agent_settings.json if it exists in the current directory to preserve configuration
+  if (!winswSrc.existsSync()) {
+    stdout.writeln('WinSW-x64.exe not found locally. Downloading from official releases...');
+    try {
+      final client = HttpClient();
+      final request = await client.getUrl(Uri.parse(
+        'https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe'
+      ));
+      final response = await request.close();
+      if (response.statusCode == 200) {
+        await response.pipe(targetWinSW.openWrite());
+        await targetWinSW.copy(targetServiceExe.path);
+        stdout.writeln('WinSW-x64.exe downloaded successfully.');
+      } else {
+        stderr.writeln('Failed to download WinSW-x64.exe: HTTP ${response.statusCode}');
+        exit(1);
+      }
+    } catch (e) {
+      stderr.writeln('Error downloading WinSW-x64.exe: $e');
+      exit(1);
+    }
+  } else {
+    try {
+      await winswSrc.copy(targetWinSW.path);
+      await winswSrc.copy(targetServiceExe.path);
+    } catch (e) {
+      stderr.writeln('Error copying WinSW files: $e');
+      exit(1);
+    }
+  }
+
+  // 4. Copy agent.exe and handle agent_settings.json / token persistence
+  String token = '';
+  try {
+    await exeFile.copy(targetAgentExe.path);
+
     final localSettings = File('$exeDir/agent_settings.json');
     final targetSettings = File(r'C:\tcp_tunnel_agent\agent_settings.json');
+    
     if (localSettings.existsSync()) {
       await localSettings.copy(targetSettings.path);
+      try {
+        final content = await targetSettings.readAsString();
+        final config = jsonDecode(content) as Map<String, dynamic>;
+        token = config['token'] as String? ?? '';
+      } catch (_) {}
     } else if (!targetSettings.existsSync()) {
-      // Generate a new secure persistent token
-      final token = const Uuid().v4();
+      token = const Uuid().v4();
+      final configJson = {'token': token};
+      await targetSettings.writeAsString(jsonEncode(configJson));
+    } else {
+      try {
+        final content = await targetSettings.readAsString();
+        final config = jsonDecode(content) as Map<String, dynamic>;
+        token = config['token'] as String? ?? '';
+      } catch (_) {}
+    }
+    
+    if (token.isEmpty) {
+      token = const Uuid().v4();
       final configJson = {'token': token};
       await targetSettings.writeAsString(jsonEncode(configJson));
     }
   } catch (e) {
-    stderr.writeln('Error copying files during installation: $e');
+    stderr.writeln('Error copying files or setting up token: $e');
     exit(1);
   }
 
@@ -466,7 +505,7 @@ Future<void> _handleSilentInstall() async {
     exit(1);
   }
 
-  // 6. Install and start
+  // 6. Install and start the service
   stdout.writeln('Installing TCP Tunnel Agent service...');
   await Process.run(targetServiceExe.path, ['stop']);
   await Process.run(targetServiceExe.path, ['uninstall']);
@@ -488,4 +527,17 @@ Future<void> _handleSilentInstall() async {
   stdout.writeln('Success: TCP Tunnel Agent service installed and started!');
   stdout.writeln('Installed path: C:\\tcp_tunnel_agent');
   stdout.writeln('====================================================');
+
+  // Copy token to clipboard and show popup dialog with the token!
+  try {
+    await Process.run('powershell', ['-Command', 'Set-Clipboard -Value "$token"']);
+    final msg = 'TCP Tunnel Agent has been successfully installed and started as a Windows Service!\n\n'
+        'Your Connection Token: $token\n\n'
+        'This token has been copied to your clipboard. Paste it into the client application to connect.';
+    await Process.run('powershell', [
+      '-Command',
+      'Add-Type -AssemblyName PresentationFramework; '
+      '[System.Windows.MessageBox]::Show("$msg", "TCP Tunnel Agent Setup", "OK", "Information")'
+    ]);
+  } catch (_) {}
 }
