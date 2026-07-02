@@ -240,10 +240,15 @@ public class RawPrinter {
     }
 }
 ''';
-          final result = await Process.run('powershell', [
-            '-Command',
-            'Add-Type -TypeDefinition @"\n$csharpCode\n"@; [RawPrinter]::SendFileToPrinter("$printerName", "$filePath")'
-          ]);
+          final psCommand = 'Add-Type -TypeDefinition @"\n$csharpCode\n"@; [RawPrinter]::SendFileToPrinter("$printerName", "$filePath")';
+          final List<int> utf16Bytes = [];
+          for (int i = 0; i < psCommand.length; i++) {
+            final codeUnit = psCommand.codeUnitAt(i);
+            utf16Bytes.add(codeUnit & 0xFF);
+            utf16Bytes.add((codeUnit >> 8) & 0xFF);
+          }
+          final encodedCommand = base64Encode(utf16Bytes);
+          final result = await Process.run('powershell', ['-EncodedCommand', encodedCommand]);
           return result.exitCode == 0 && result.stdout.toString().trim().toLowerCase() == 'true';
         }
       } else if (Platform.isLinux) {

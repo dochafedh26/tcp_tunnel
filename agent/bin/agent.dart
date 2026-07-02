@@ -417,6 +417,17 @@ Future<void> _handleSilentInstall() async {
   final targetWinSW = File(r'C:\tcp_tunnel_agent\WinSW-x64.exe');
   final targetServiceExe = File(r'C:\tcp_tunnel_agent\tcp_tunnel_agent_service.exe');
 
+  if (targetServiceExe.existsSync()) {
+    stdout.writeln('Stopping and uninstalling existing service to release file locks...');
+    try {
+      await Process.run(targetServiceExe.path, ['stop']);
+      await Process.run(targetServiceExe.path, ['uninstall']);
+      await Future.delayed(const Duration(milliseconds: 1000));
+    } catch (e) {
+      stderr.writeln('Warning: Failed to stop/uninstall existing service: $e');
+    }
+  }
+
   if (!winswSrc.existsSync()) {
     stdout.writeln('WinSW-x64.exe not found locally. Downloading from official releases...');
     try {
