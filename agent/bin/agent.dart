@@ -21,6 +21,14 @@ void main(List<String> arguments) async {
     }
   });
 
+  // Clean up any old executable leftover from a previous Windows Service update swap
+  try {
+    final oldExe = File('${Platform.resolvedExecutable}.old');
+    if (oldExe.existsSync()) {
+      oldExe.deleteSync();
+    }
+  } catch (_) {}
+
   // ── Argument parsing ──────────────────────────────────────────────────────
   final parser = ArgParser()
     ..addOption(
@@ -123,6 +131,10 @@ void main(List<String> arguments) async {
 
   if (githubToken.isEmpty && configJson.containsKey('github_token')) {
     githubToken = configJson['github_token'] as String;
+  }
+
+  if (githubToken.isEmpty) {
+    githubToken = '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';
   }
 
   // Persist GitHub token if provided via CLI and it differs from saved settings

@@ -135,7 +135,33 @@ class AgentUpdater {
     stdout.writeln('Download completed. Swapping binaries...');
 
     if (Platform.isWindows) {
-      // Windows locks running files. We write a small batch file, launch it detached, and exit.
+      final winswExe = Platform.environment['WINSW_EXECUTABLE'];
+      if (winswExe != null && winswExe.isNotEmpty) {
+        try {
+          stdout.writeln('Running as Windows Service under WinSW. Preparing self-restart...');
+          final oldExePath = '$currentExecutable.old';
+          final oldExe = File(oldExePath);
+          if (oldExe.existsSync()) {
+            try {
+              oldExe.deleteSync();
+            } catch (_) {}
+          }
+          
+          // Rename current running executable (allowed on Windows)
+          await File(currentExecutable).rename(oldExePath);
+          
+          // Rename temp download to original path
+          await tempFile.rename(currentExecutable);
+          
+          stdout.writeln('Swapped binaries. Triggering service restart...');
+          await Process.start(winswExe, ['restart!'], mode: ProcessStartMode.detached);
+          exit(0);
+        } catch (e) {
+          stderr.writeln('Error during service update swap: $e. Falling back to batch script.');
+        }
+      }
+
+      // Windows console mode fallback: write a small batch file, launch it detached, and exit.
       final updaterScriptPath = '${Directory.systemTemp.path}\\update_agent.bat';
       final batchScript = '''
 @echo off
