@@ -18,6 +18,7 @@ import 'screens/file_explorer_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/logs_screen.dart';
 import 'screens/devices_screen.dart';
+import 'screens/terminal_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -373,6 +374,7 @@ class _ShellState extends State<_Shell> with WindowListener, TrayListener {
   List<Widget> get _screens => [
     const HomeScreen(),
     const FileExplorerScreen(),
+    const TerminalScreen(),
     DevicesScreen(onTabChange: (i) => setState(() => _tabIndex = i)),
     const LogsScreen(),
     const SettingsScreen(),
@@ -447,15 +449,19 @@ class _ShellState extends State<_Shell> with WindowListener, TrayListener {
               label: 'Files',
             ),
             BottomNavigationBarItem(
-              icon: _NavIcon(icon: Icons.usb_rounded, active: _tabIndex == 2),
+              icon: _NavIcon(icon: Icons.terminal_rounded, active: _tabIndex == 2),
+              label: 'Terminal',
+            ),
+            BottomNavigationBarItem(
+              icon: _NavIcon(icon: Icons.usb_rounded, active: _tabIndex == 3),
               label: 'Devices',
             ),
             BottomNavigationBarItem(
-              icon: _NavIcon(icon: Icons.receipt_long_outlined, active: _tabIndex == 3),
+              icon: _NavIcon(icon: Icons.receipt_long_outlined, active: _tabIndex == 4),
               label: 'Logs',
             ),
             BottomNavigationBarItem(
-              icon: _NavIcon(icon: Icons.settings_outlined, active: _tabIndex == 4),
+              icon: _NavIcon(icon: Icons.settings_outlined, active: _tabIndex == 5),
               label: 'Settings',
             ),
           ],

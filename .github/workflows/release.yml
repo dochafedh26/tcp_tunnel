@@ -108,8 +108,10 @@ jobs:
           VERSION="${TAG_NAME#v}"
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             dart compile exe bin/agent.dart -o "agent_windows_$VERSION.exe"
+            cp "agent_windows_$VERSION.exe" agent-windows.exe
           else
             dart compile exe bin/agent.dart -o "agent_linux_$VERSION"
+            cp "agent_linux_$VERSION" agent-linux
           fi
         working-directory: ./agent
 
@@ -120,6 +122,8 @@ jobs:
           path: |
             ./agent/agent_windows_*.exe
             ./agent/agent_linux_*
+            ./agent/agent-windows.exe
+            ./agent/agent-linux
 
   # ── BUILD THE FLUTTER APP ──────────────────────────────────────────────────
   build-flutter:
@@ -255,7 +259,7 @@ jobs:
         shell: bash
         run: |
           # Use find to locate all compiled executables, zips, apks, and tars recursively in downloaded dirs
-          FILES=$(find . -maxdepth 3 -type f \( -name "agent_*" -o -name "tcp_tunnel_client_*" \))
+          FILES=$(find . -maxdepth 3 -type f \( -name "agent_*" -o -name "agent-*" -o -name "tcp_tunnel_client_*" \))
           echo "Found release files:"
           echo "$FILES"
           

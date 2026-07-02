@@ -130,7 +130,9 @@ wss.on('connection', (ws, req) => {
     // Using token as session key allows client+agent to be paired automatically
     const sessionKey = msg.token;
     if (!sessions.has(sessionKey)) {
-      sessions.set(sessionKey, new RelaySession(uuidv4(), logger));
+      const newSession = new RelaySession(uuidv4(), logger);
+      newSession.token = sessionKey;
+      sessions.set(sessionKey, newSession);
     }
     const session = sessions.get(sessionKey);
 

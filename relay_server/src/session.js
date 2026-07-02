@@ -19,6 +19,7 @@ class RelaySession {
     this.channelCount = 0;
     this.bytesRelayed = 0;
     this.createdAt = new Date();
+    this.token = null;
   }
 
   /**
@@ -184,6 +185,7 @@ class RelaySession {
       channelCount: this.channelCount,
       bytesRelayed: this.bytesRelayed,
       uptimeSeconds: Math.floor(uptimeMs / 1000),
+      token: this.token || '',
     };
   }
 }

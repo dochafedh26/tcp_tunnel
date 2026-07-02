@@ -3,9 +3,9 @@ import 'package:provider/provider.dart';
 import '../services/tunnel_service.dart';
 
 class TerminalScreen extends StatefulWidget {
-  final String initialCwd;
+  final String? initialCwd;
 
-  const TerminalScreen({super.key, required this.initialCwd});
+  const TerminalScreen({super.key, this.initialCwd});
 
   @override
   State<TerminalScreen> createState() => _TerminalScreenState();
@@ -23,7 +23,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
   @override
   void initState() {
     super.initState();
-    _currentCwd = widget.initialCwd;
+    _currentCwd = widget.initialCwd ?? '.';
     _history.add(_TerminalLine(
       text: 'TCP Tunnel Remote Shell\nType any system command and press Enter to execute on the agent machine.',
       type: _LineType.info,

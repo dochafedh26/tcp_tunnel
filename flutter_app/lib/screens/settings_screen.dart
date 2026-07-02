@@ -82,7 +82,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           Future<void> selectAgent(Map<String, dynamic> agent) async {
             final agentName = agent['agentName'] as String? ?? 'Unknown Agent';
-            final tokenCtrl = TextEditingController();
+            final tokenCtrl = TextEditingController(text: agent['token'] as String? ?? '');
             bool tokenObscured = true;
 
             final pairSuccess = await showDialog<bool>(
