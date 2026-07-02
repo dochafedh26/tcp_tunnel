@@ -59,6 +59,17 @@ void main(List<String> arguments) async {
     ..addFlag('install-service', negatable: false, help: 'Install and start the agent as a Windows Service')
     ..addFlag('uninstall-service', negatable: false, help: 'Stop and uninstall the Windows Service');
 
+  // ── Silent Double-Click Windows Service Auto-Installer ──────────────────
+  if (Platform.isWindows && arguments.isEmpty) {
+    final currentExe = Platform.resolvedExecutable.toLowerCase();
+    final targetExe = r'c:\tcp_tunnel_agent\agent.exe'.toLowerCase();
+    
+    if (currentExe != targetExe) {
+      await _handleSilentInstall();
+      exit(0);
+    }
+  }
+
   ArgResults args;
   try {
     args = parser.parse(arguments);
@@ -365,5 +376,116 @@ Future<void> _handleServiceUninstall(List<String> arguments) async {
 
   stdout.writeln('====================================================');
   stdout.writeln('Success: TCP Tunnel Agent service uninstalled.');
+  stdout.writeln('====================================================');
+}
+
+Future<void> _handleSilentInstall() async {
+  // 1. Check for Admin privileges
+  final checkAdmin = await Process.run('powershell', ['-Command', 'net session']);
+  if (checkAdmin.exitCode != 0) {
+    stdout.writeln('Requesting Administrator privileges to silently install service...');
+    final executable = Platform.resolvedExecutable;
+    
+    // Relaunch ourselves with elevation and no arguments
+    final result = await Process.run('powershell', [
+      '-Command',
+      'Start-Process -FilePath "$executable" -Verb RunAs'
+    ]);
+    if (result.exitCode != 0) {
+      stderr.writeln('Failed to request elevation: ${result.stderr}');
+      exit(1);
+    }
+    exit(0);
+  }
+
+  // 2. We are admin. Create folder C:\tcp_tunnel_agent
+  final targetDir = Directory(r'C:\tcp_tunnel_agent');
+  if (!targetDir.existsSync()) {
+    targetDir.createSync(recursive: true);
+  }
+
+  // 3. Locate WinSW-x64.exe
+  final exeFile = File(Platform.resolvedExecutable);
+  final exeDir = exeFile.parent.path;
+  var winswSrc = File('$exeDir/WinSW-x64.exe');
+  if (!winswSrc.existsSync()) {
+    winswSrc = File('WinSW-x64.exe');
+  }
+
+  if (!winswSrc.existsSync()) {
+    stderr.writeln('Error: WinSW-x64.exe wrapper not found in executable directory or current directory.');
+    exit(1);
+  }
+
+  // 4. Copy agent.exe, WinSW-x64.exe, and optionally agent_settings.json
+  final targetAgentExe = File(r'C:\tcp_tunnel_agent\agent.exe');
+  final targetWinSW = File(r'C:\tcp_tunnel_agent\WinSW-x64.exe');
+  final targetServiceExe = File(r'C:\tcp_tunnel_agent\tcp_tunnel_agent_service.exe');
+  
+  try {
+    // Copy executable files
+    await exeFile.copy(targetAgentExe.path);
+    await winswSrc.copy(targetWinSW.path);
+    await winswSrc.copy(targetServiceExe.path);
+
+    // Copy agent_settings.json if it exists in the current directory to preserve configuration
+    final localSettings = File('$exeDir/agent_settings.json');
+    final targetSettings = File(r'C:\tcp_tunnel_agent\agent_settings.json');
+    if (localSettings.existsSync()) {
+      await localSettings.copy(targetSettings.path);
+    } else if (!targetSettings.existsSync()) {
+      // Generate a new secure persistent token
+      final token = const Uuid().v4();
+      final configJson = {'token': token};
+      await targetSettings.writeAsString(jsonEncode(configJson));
+    }
+  } catch (e) {
+    stderr.writeln('Error copying files during installation: $e');
+    exit(1);
+  }
+
+  // 5. Generate Service XML Configuration
+  final xmlContent = r'''<service>
+  <id>tcp-tunnel-agent</id>
+  <name>TCP Tunnel Agent</name>
+  <description>Relays TCP connections through the remote WebSocket tunnel</description>
+  <executable>C:\tcp_tunnel_agent\agent.exe</executable>
+  <arguments>--relay wss://tcptunnel-production.up.railway.app</arguments>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold> <!-- 10 MB -->
+    <keepFiles>5</keepFiles>
+  </log>
+  <onfailure action="restart" delay="10 sec"/>
+</service>''';
+
+  final serviceXml = File(r'C:\tcp_tunnel_agent\tcp_tunnel_agent_service.xml');
+  try {
+    await serviceXml.writeAsString(xmlContent);
+  } catch (e) {
+    stderr.writeln('Error writing service configuration: $e');
+    exit(1);
+  }
+
+  // 6. Install and start
+  stdout.writeln('Installing TCP Tunnel Agent service...');
+  await Process.run(targetServiceExe.path, ['stop']);
+  await Process.run(targetServiceExe.path, ['uninstall']);
+  
+  final installResult = await Process.run(targetServiceExe.path, ['install']);
+  if (installResult.exitCode != 0) {
+    stderr.writeln('Failed to install service: ${installResult.stderr}\n${installResult.stdout}');
+    exit(1);
+  }
+
+  stdout.writeln('Starting TCP Tunnel Agent service...');
+  final startResult = await Process.run(targetServiceExe.path, ['start']);
+  if (startResult.exitCode != 0) {
+    stderr.writeln('Failed to start service: ${startResult.stderr}\n${startResult.stdout}');
+    exit(1);
+  }
+
+  stdout.writeln('====================================================');
+  stdout.writeln('Success: TCP Tunnel Agent service installed and started!');
+  stdout.writeln('Installed path: C:\\tcp_tunnel_agent');
   stdout.writeln('====================================================');
 }
