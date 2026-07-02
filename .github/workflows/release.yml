@@ -9,9 +9,37 @@ permissions:
   contents: write
 
 jobs:
+  # ── DETECT CHANGED PATHS ───────────────────────────────────────────────────
+  filter:
+    name: Check Changed Paths
+    runs-on: ubuntu-latest
+    outputs:
+      agent_changed: ${{ steps.filter.outputs.agent }}
+      flutter_changed: ${{ steps.filter.outputs.flutter }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Path Filter
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          base: ${{ github.event.before == '0000000000000000000000000000000000000000' && 'HEAD~1' || github.event.before }}
+          filters: |
+            agent:
+              - 'agent/**'
+              - '.github/workflows/release.yml'
+            flutter:
+              - 'flutter_app/**'
+              - '.github/workflows/release.yml'
+
   # ── BUILD THE DART AGENT ───────────────────────────────────────────────────
   build-agent:
     name: Build Agent (${{ matrix.os }})
+    needs: filter
+    if: needs.filter.outputs.agent_changed == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -59,6 +87,8 @@ jobs:
   # ── BUILD THE FLUTTER APP ──────────────────────────────────────────────────
   build-flutter:
     name: Build Flutter Client (${{ matrix.target }})
+    needs: filter
+    if: needs.filter.outputs.flutter_changed == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -166,20 +196,46 @@ jobs:
   # ── CREATE GITHUB RELEASE & UPLOAD ASSETS ──────────────────────────────────
   create-release:
     name: Create GitHub Release
-    needs: [build-agent, build-flutter]
+    needs: [filter, build-agent, build-flutter]
+    if: |
+      always() &&
+      (needs.build-agent.result == 'success' || needs.build-agent.result == 'skipped') &&
+      (needs.build-flutter.result == 'success' || needs.build-flutter.result == 'skipped') &&
+      (needs.filter.outputs.agent_changed == 'true' || needs.filter.outputs.flutter_changed == 'true')
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
+        continue-on-error: true
+
+      - name: Prepare Release Files
+        id: release_files
+        shell: bash
+        run: |
+          FILES=""
+          if [ -d "agent-linux" ]; then
+            FILES="${FILES}agent-linux/agent-linux"$'\n'
+          fi
+          if [ -d "agent-windows.exe" ]; then
+            FILES="${FILES}agent-windows.exe/agent-windows.exe"$'\n'
+          fi
+          if [ -d "tcp_tunnel_client.apk" ]; then
+            FILES="${FILES}tcp_tunnel_client.apk/tcp_tunnel_client.apk"$'\n'
+          fi
+          if [ -d "tcp_tunnel_client-windows.zip" ]; then
+            FILES="${FILES}tcp_tunnel_client-windows.zip/tcp_tunnel_client-windows.zip"$'\n'
+          fi
+          if [ -d "tcp_tunnel_client-linux.tar.gz" ]; then
+            FILES="${FILES}tcp_tunnel_client-linux.tar.gz/tcp_tunnel_client-linux.tar.gz"$'\n'
+          fi
+          FILES=$(echo -n "$FILES")
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          echo "$FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            agent-linux/agent-linux
-            agent-windows.exe/agent-windows.exe
-            tcp_tunnel_client.apk/tcp_tunnel_client.apk
-            tcp_tunnel_client-windows.zip/tcp_tunnel_client-windows.zip
-            tcp_tunnel_client-linux.tar.gz/tcp_tunnel_client-linux.tar.gz
+          files: ${{ steps.release_files.outputs.files }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
