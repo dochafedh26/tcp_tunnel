@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/tunnel_service.dart';
+import '../services/terminal_service.dart';
 
 class TerminalScreen extends StatefulWidget {
   final String? initialCwd;
@@ -12,23 +13,20 @@ class TerminalScreen extends StatefulWidget {
 }
 
 class _TerminalScreenState extends State<TerminalScreen> {
-  final List<_TerminalLine> _history = [];
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final FocusNode _focusNode = FocusNode();
-  
-  late String _currentCwd;
-  bool _executing = false;
+
+  TerminalSession? _lastSession;
 
   @override
   void initState() {
     super.initState();
-    _currentCwd = widget.initialCwd ?? '.';
-    _history.add(_TerminalLine(
-      text: 'TCP Tunnel Remote Shell\nType any system command and press Enter to execute on the agent machine.',
-      type: _LineType.info,
-    ));
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      final service = context.read<TerminalService>();
+      if (widget.initialCwd != null && service.activeSession != null) {
+        service.setCwd(service.activeSession!.id, widget.initialCwd!);
+      }
       _focusNode.requestFocus();
     });
   }
@@ -55,63 +53,57 @@ class _TerminalScreenState extends State<TerminalScreen> {
     final cmd = _inputController.text.trim();
     if (cmd.isEmpty) return;
 
+    final service = context.read<TunnelService>();
+    final terminalService = context.read<TerminalService>();
+    final session = terminalService.activeSession;
+    if (session == null) return;
+
+    final sessionId = session.id;
+
     _inputController.clear();
-    setState(() {
-      _executing = true;
-      _history.add(_TerminalLine(
-        text: cmd,
-        type: _LineType.command,
-        cwd: _currentCwd,
-      ));
-    });
+    session.inputBuffer = '';
+
+    terminalService.addLine(sessionId, TerminalLine(
+      text: cmd,
+      type: TerminalLineType.command,
+      cwd: session.currentCwd,
+    ));
+    terminalService.setExecuting(sessionId, true);
     
     // Defer scrolling so history gets rendered first
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
 
     try {
-      final service = context.read<TunnelService>();
-      
       // Specially intercept "cd" command to change working directory client-side!
       if (cmd.startsWith('cd ') || cmd == 'cd') {
         final pathArg = cmd.length > 3 ? cmd.substring(3).trim() : '';
         if (pathArg.isEmpty) {
-          // cd with no args - just report current folder
-          setState(() {
-            _history.add(_TerminalLine(text: _currentCwd, type: _LineType.stdout));
-            _executing = false;
-          });
+          terminalService.addLine(sessionId, TerminalLine(text: session.currentCwd, type: TerminalLineType.stdout));
+          terminalService.setExecuting(sessionId, false);
         } else {
-          // Resolve remote path changes
-          // Request file listing from the new directory to check if it exists
           final testPath = pathArg;
           try {
             await service.fetchRemoteFiles(testPath);
-            setState(() {
-              _currentCwd = testPath;
-              _history.add(_TerminalLine(text: 'Directory changed to: $_currentCwd', type: _LineType.info));
-              _executing = false;
-            });
+            terminalService.setCwd(sessionId, testPath);
+            terminalService.addLine(sessionId, TerminalLine(text: 'Directory changed to: $testPath', type: TerminalLineType.info));
+            terminalService.setExecuting(sessionId, false);
           } catch (e) {
             // Check if relative path or drive
-            var resolvedPath = _currentCwd;
-            if (_currentCwd.contains('\\')) {
-              resolvedPath = '$_currentCwd\\$testPath';
+            var resolvedPath = session.currentCwd;
+            if (session.currentCwd.contains('\\')) {
+              resolvedPath = '${session.currentCwd}\\$testPath';
             } else {
-              resolvedPath = '$_currentCwd/$testPath';
+              resolvedPath = '${session.currentCwd}/$testPath';
             }
             
             try {
               await service.fetchRemoteFiles(resolvedPath);
-              setState(() {
-                _currentCwd = resolvedPath;
-                _history.add(_TerminalLine(text: 'Directory changed to: $_currentCwd', type: _LineType.info));
-                _executing = false;
-              });
+              terminalService.setCwd(sessionId, resolvedPath);
+              terminalService.addLine(sessionId, TerminalLine(text: 'Directory changed to: $resolvedPath', type: TerminalLineType.info));
+              terminalService.setExecuting(sessionId, false);
             } catch (_) {
-              setState(() {
-                _history.add(_TerminalLine(text: 'Error: Directory not found: $testPath', type: _LineType.stderr));
-                _executing = false;
-              });
+              terminalService.addLine(sessionId, TerminalLine(text: 'Error: Directory not found: $testPath', type: TerminalLineType.stderr));
+              terminalService.setExecuting(sessionId, false);
             }
           }
         }
@@ -120,39 +112,128 @@ class _TerminalScreenState extends State<TerminalScreen> {
         return;
       }
 
-      final result = await service.executeRemoteCommand(cmd, _currentCwd);
+      final result = await service.executeRemoteCommand(cmd, session.currentCwd);
       final stdoutText = result['stdout'] as String? ?? '';
       final stderrText = result['stderr'] as String? ?? '';
       final exitCode = result['exitCode'] as int? ?? 0;
 
-      setState(() {
-        if (stdoutText.isNotEmpty) {
-          _history.add(_TerminalLine(text: stdoutText, type: _LineType.stdout));
-        }
-        if (stderrText.isNotEmpty) {
-          _history.add(_TerminalLine(text: stderrText, type: _LineType.stderr));
-        }
-        if (exitCode != 0) {
-          _history.add(_TerminalLine(text: 'Process exited with code $exitCode', type: _LineType.stderr));
-        }
-        _executing = false;
-      });
+      if (stdoutText.isNotEmpty) {
+        terminalService.addLine(sessionId, TerminalLine(text: stdoutText, type: TerminalLineType.stdout));
+      }
+      if (stderrText.isNotEmpty) {
+        terminalService.addLine(sessionId, TerminalLine(text: stderrText, type: TerminalLineType.stderr));
+      }
+      if (exitCode != 0) {
+        terminalService.addLine(sessionId, TerminalLine(text: 'Process exited with code $exitCode', type: TerminalLineType.stderr));
+      }
+      terminalService.setExecuting(sessionId, false);
     } catch (e) {
-      setState(() {
-        _history.add(_TerminalLine(
-          text: e.toString().replaceAll('Exception: ', ''),
-          type: _LineType.stderr,
-        ));
-        _executing = false;
-      });
+      terminalService.addLine(sessionId, TerminalLine(
+        text: e.toString().replaceAll('Exception: ', ''),
+        type: TerminalLineType.stderr,
+      ));
+      terminalService.setExecuting(sessionId, false);
     }
 
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     _focusNode.requestFocus();
   }
 
+  Widget _buildTabBar(TerminalService service) {
+    return Container(
+      height: 40,
+      color: const Color(0xFF0F1320),
+      child: Row(
+        children: [
+          Expanded(
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: service.sessions.length,
+              itemBuilder: (context, index) {
+                final session = service.sessions[index];
+                final isActive = index == service.activeSessionIndex;
+                return GestureDetector(
+                  onTap: () => service.selectSession(index),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    decoration: BoxDecoration(
+                      color: isActive ? const Color(0xFF05070D) : const Color(0xFF0F1320),
+                      border: Border(
+                        bottom: BorderSide(
+                          color: isActive ? const Color(0xFF00BFA5) : Colors.transparent,
+                          width: 2,
+                        ),
+                        right: const BorderSide(color: Color(0xFF1E2638), width: 1),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.terminal_rounded,
+                          size: 14,
+                          color: isActive ? const Color(0xFF00BFA5) : const Color(0xFF8892A4),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          session.name,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+                            color: isActive ? Colors.white : const Color(0xFF8892A4),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        GestureDetector(
+                          onTap: () {
+                            service.closeSession(index);
+                          },
+                          child: Icon(
+                            Icons.close_rounded,
+                            size: 14,
+                            color: isActive ? const Color(0xFF00BFA5) : const Color(0xFF4A5568),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.add_rounded, color: Color(0xFF00BFA5), size: 20),
+            tooltip: 'New Terminal',
+            onPressed: () => service.createNewSession(),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final terminalService = context.watch<TerminalService>();
+    final session = terminalService.activeSession;
+
+    if (session == null) {
+      return const Scaffold(
+        body: Center(child: Text('No active terminal sessions')),
+      );
+    }
+
+    if (session != _lastSession) {
+      if (_lastSession != null) {
+        _lastSession!.inputBuffer = _inputController.text;
+      }
+      _inputController.text = session.inputBuffer;
+      _lastSession = session;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _scrollToBottom();
+        _focusNode.requestFocus();
+      });
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFF070A13),
       appBar: AppBar(
@@ -170,19 +251,14 @@ class _TerminalScreenState extends State<TerminalScreen> {
             icon: const Icon(Icons.delete_sweep_outlined, color: Color(0xFF8892A4)),
             tooltip: 'Clear Console',
             onPressed: () {
-              setState(() {
-                _history.clear();
-                _history.add(_TerminalLine(
-                  text: 'Console cleared.',
-                  type: _LineType.info,
-                ));
-              });
+              terminalService.clearSession(terminalService.activeSessionIndex);
             },
           ),
         ],
       ),
       body: Column(
         children: [
+          _buildTabBar(terminalService),
           Expanded(
             child: GestureDetector(
               onTap: () => _focusNode.requestFocus(),
@@ -197,8 +273,8 @@ class _TerminalScreenState extends State<TerminalScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      ..._history.map((line) => _buildTerminalLine(line)),
-                      if (_executing)
+                      ...session.history.map((line) => _buildTerminalLine(line)),
+                      if (session.executing)
                         Padding(
                           padding: const EdgeInsets.symmetric(vertical: 8.0),
                           child: Row(
@@ -238,7 +314,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
             child: Row(
               children: [
                 Text(
-                  _currentCwd.isEmpty ? '> ' : '${_currentCwd.split(RegExp(r'[\\/]')).lastOrNull ?? _currentCwd}> ',
+                  session.currentCwd.isEmpty ? '> ' : '${session.currentCwd.split(RegExp(r'[\\/]')).lastOrNull ?? session.currentCwd}> ',
                   style: const TextStyle(
                     fontFamily: 'Courier',
                     fontWeight: FontWeight.bold,
@@ -250,8 +326,11 @@ class _TerminalScreenState extends State<TerminalScreen> {
                   child: TextField(
                     controller: _inputController,
                     focusNode: _focusNode,
+                    onChanged: (val) {
+                      session.inputBuffer = val;
+                    },
                     onSubmitted: (_) => _executeCommand(),
-                    enabled: !_executing,
+                    enabled: !session.executing,
                     style: const TextStyle(
                       fontFamily: 'Courier',
                       color: Colors.white,
@@ -271,7 +350,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.send_rounded, color: Color(0xFF00BFA5), size: 20),
-                  onPressed: _executing ? null : _executeCommand,
+                  onPressed: session.executing ? null : _executeCommand,
                 ),
               ],
             ),
@@ -281,9 +360,9 @@ class _TerminalScreenState extends State<TerminalScreen> {
     );
   }
 
-  Widget _buildTerminalLine(_TerminalLine line) {
+  Widget _buildTerminalLine(TerminalLine line) {
     switch (line.type) {
-      case _LineType.command:
+      case TerminalLineType.command:
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: 4.0),
           child: RichText(
@@ -302,7 +381,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
             ),
           ),
         );
-      case _LineType.stdout:
+      case TerminalLineType.stdout:
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: 2.0),
           child: SelectableText(
@@ -315,7 +394,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
             ),
           ),
         );
-      case _LineType.stderr:
+      case TerminalLineType.stderr:
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: 2.0),
           child: SelectableText(
@@ -328,7 +407,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
             ),
           ),
         );
-      case _LineType.info:
+      case TerminalLineType.info:
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: 6.0),
           child: Text(
@@ -343,14 +422,4 @@ class _TerminalScreenState extends State<TerminalScreen> {
         );
     }
   }
-}
-
-enum _LineType { command, stdout, stderr, info }
-
-class _TerminalLine {
-  final String text;
-  final _LineType type;
-  final String? cwd;
-
-  _TerminalLine({required this.text, required this.type, this.cwd});
 }

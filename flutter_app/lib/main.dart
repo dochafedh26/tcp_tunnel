@@ -13,6 +13,7 @@ import 'models/tunnel_config.dart';
 import 'services/settings_service.dart';
 import 'services/tunnel_service.dart';
 import 'services/updater_service.dart';
+import 'services/terminal_service.dart';
 import 'screens/home_screen.dart';
 import 'screens/file_explorer_screen.dart';
 import 'screens/settings_screen.dart';
@@ -96,6 +97,7 @@ void main() async {
         providers: [
           ChangeNotifierProvider.value(value: tunnel),
           ChangeNotifierProvider.value(value: settings),
+          ChangeNotifierProvider(create: (_) => TerminalService()),
         ],
         child: const TcpTunnelApp(),
       ),
