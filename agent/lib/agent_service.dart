@@ -14,7 +14,7 @@ import 'device_manager.dart';
 /// Manages the agent's WebSocket connection to the relay server and
 /// forwards TCP traffic between the relay and local work resources.
 class AgentService {
-  final String relayUrl;
+  final List<String> relayUrls;
   final String token;
   final String sharedDir;
 
@@ -38,8 +38,9 @@ class AgentService {
   int bytesSent = 0;
   int get activeChannels => _sockets.length;
 
-  AgentService({required this.relayUrl, required this.token, String? sharedDir})
-      : sharedDir = sharedDir ?? Directory.current.path {
+  AgentService({required String relayUrl, required this.token, String? sharedDir})
+      : relayUrls = relayUrl.split(',').map((u) => u.trim()).where((u) => u.isNotEmpty).toList(),
+        sharedDir = sharedDir ?? Directory.current.path {
     _fileManager = FileManager(this.sharedDir);
   }
 
@@ -52,14 +53,22 @@ class AgentService {
     // Start virtual RAW TCP print servers for USB printers
     _startPrinterServers();
 
+    if (relayUrls.isEmpty) {
+      _log.severe('No relay URLs configured. Exiting.');
+      return;
+    }
+
+    int urlIndex = 0;
     while (_running) {
+      final currentUrl = relayUrls[urlIndex];
       try {
-        await _connect();
+        await _connect(currentUrl);
       } catch (e, st) {
-        _log.severe('Connection error', e, st);
+        _log.severe('Connection error to $currentUrl', e, st);
       }
       if (_running) {
-        _log.info('Reconnecting in 5 seconds...');
+        urlIndex = (urlIndex + 1) % relayUrls.length;
+        _log.info('Reconnecting in 5 seconds to ${relayUrls[urlIndex]}...');
         await Future.delayed(const Duration(seconds: 5));
       }
     }
@@ -76,8 +85,8 @@ class AgentService {
 
   // ── Connection ────────────────────────────────────────────────────────────
 
-  Future<void> _connect() async {
-    var normalizedUrl = relayUrl.trim();
+  Future<void> _connect(String urlToConnect) async {
+    var normalizedUrl = urlToConnect.trim();
     if (!normalizedUrl.startsWith('ws://') && !normalizedUrl.startsWith('wss://')) {
       if (normalizedUrl.startsWith('http://') || normalizedUrl.startsWith('https://')) {
         normalizedUrl = normalizedUrl.replaceFirst('http', 'ws');

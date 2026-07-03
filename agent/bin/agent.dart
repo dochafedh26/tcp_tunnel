@@ -34,8 +34,8 @@ void main(List<String> arguments) async {
     ..addOption(
       'relay',
       abbr: 'r',
-      help: 'Relay server WebSocket URL (ws:// or wss://)',
-      defaultsTo: 'wss://relayserver.medevsync.com',
+      help: 'Relay server WebSocket URL(s) (comma-separated for fallbacks)',
+      defaultsTo: 'wss://relayserver.medevsync.com,wss://tcptunnel-production.up.railway.app',
     )
     ..addOption(
       'token',
@@ -501,7 +501,7 @@ Future<void> _handleSilentInstall() async {
   <name>TCP Tunnel Agent</name>
   <description>Relays TCP connections through the remote WebSocket tunnel</description>
   <executable>C:\\tcp_tunnel_agent\\agent.exe</executable>
-  <arguments>--relay wss://relayserver.medevsync.com --token $token</arguments>
+  <arguments>--relay wss://relayserver.medevsync.com,wss://tcptunnel-production.up.railway.app --token $token</arguments>
   <log mode="roll-by-size">
     <sizeThreshold>10240</sizeThreshold> <!-- 10 MB -->
     <keepFiles>5</keepFiles>
