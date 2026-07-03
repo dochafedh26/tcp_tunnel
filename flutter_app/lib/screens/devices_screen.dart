@@ -375,7 +375,7 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
 
   void _selectAndPrintLocalFile(TunnelService service, String printerName) async {
     try {
-      final result = await FilePicker.pickFiles();
+      final result = await FilePicker.platform.pickFiles();
       if (result == null || result.files.single.path == null) {
         return;
       }
