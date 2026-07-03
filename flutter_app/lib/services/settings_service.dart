@@ -15,7 +15,7 @@ class SettingsService extends ChangeNotifier {
   static const _keySelectedProfile = 'selected_profile_id';
   static const _keyGitHubToken = 'github_token';
 
-  static const defaultRelayUrl = 'wss://tcptunnel-production.up.railway.app';
+  static const defaultRelayUrl = 'wss://relayserver.medevsync.com';
   static const defaultToken = 'changeme';
 
   SharedPreferences? _prefs;

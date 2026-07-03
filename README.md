@@ -50,11 +50,11 @@ cd agent
 dart pub get
 
 # Run directly:
-dart run bin/agent.dart --relay wss://tcp-tunnel-relay.up.railway.app --token your-strong-secret
+dart run bin/agent.dart --relay wss://relayserver.medevsync.com --token your-strong-secret
 
 # Or compile to a standalone .exe (no Dart needed on work machine):
 dart compile exe bin/agent.dart -o agent.exe
-./agent.exe --relay wss://tcp-tunnel-relay.up.railway.app --token your-strong-secret
+./agent.exe --relay wss://relayserver.medevsync.com --token your-strong-secret
 ```
 
 **Run at Windows startup** (as a scheduled task):
