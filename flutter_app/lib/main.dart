@@ -414,7 +414,7 @@ class _ShellState extends State<_Shell> with WindowListener, TrayListener {
                 borderRadius: BorderRadius.circular(6),
                 border: Border.all(color: const Color(0xFF00BFA5).withValues(alpha: 0.3), width: 0.5),
               ),
-              child: const Text('v1.0',
+              child: const Text('v${UpdaterService.currentVersion}',
                   style: TextStyle(color: Color(0xFF00BFA5), fontSize: 10, fontWeight: FontWeight.w600)),
             ),
           ],
