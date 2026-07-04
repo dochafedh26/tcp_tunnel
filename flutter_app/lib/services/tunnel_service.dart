@@ -49,7 +49,7 @@ class TunnelService extends ChangeNotifier {
   final Map<String, Completer<bool>> _fileActionCompleters = {};
 
   // ── Device/Printer Explorer State ──────────────────────────────────────────
-  final Map<String, Completer<Map<String, List<Map<String, dynamic>>>>> _deviceListCompleters = {};
+  final Map<String, Completer<Map<String, dynamic>>> _deviceListCompleters = {};
   final Map<String, Completer<void>> _printJobCompleters = {};
 
   // ── Terminal Shell State ────────────────────────────────────────────────────
@@ -61,6 +61,11 @@ class TunnelService extends ChangeNotifier {
   final Map<String, Completer<bool>> _usbUnshareCompleters = {};
   final Map<String, Completer<bool>> _usbBindCompleters = {};
   final Map<String, Completer<bool>> _usbUnbindCompleters = {};
+  final Map<String, Completer<bool>> _installRemoteUsbipCompleters = {};
+
+  // ── USBIP State ────────────────────────────────────────────────────────────
+  bool _usbipdMissing = false;
+  bool get usbipdMissing => _usbipdMissing;
 
   // ── Stats ──────────────────────────────────────────────────────────────────
   int _bytesIn = 0;
@@ -452,6 +457,8 @@ class TunnelService extends ChangeNotifier {
         final usbDevices = List<Map<String, dynamic>>.from(msg['usbDevices'] as List? ?? []);
         final printers = List<Map<String, dynamic>>.from(msg['printers'] as List? ?? []);
         final comPorts = List<Map<String, dynamic>>.from(msg['comPorts'] as List? ?? []);
+        _usbipdMissing = msg['usbipdMissing'] as bool? ?? false;
+        notifyListeners();
         final completer = _deviceListCompleters.remove(requestId);
         if (completer != null) {
           if (success) {
@@ -459,6 +466,7 @@ class TunnelService extends ChangeNotifier {
               'usbDevices': usbDevices,
               'printers': printers,
               'comPorts': comPorts,
+              'usbipdMissing': _usbipdMissing,
             });
           } else {
             completer.completeError(Exception(error ?? 'Failed to list devices'));
@@ -560,6 +568,19 @@ class TunnelService extends ChangeNotifier {
             completer.complete(true);
           } else {
             completer.completeError(Exception(error ?? 'USBIP Unbind failed'));
+          }
+        }
+
+      case 'install_usbip_response':
+        final installRequestId = msg['requestId'] as String;
+        final installSuccess = msg['success'] as bool;
+        final installError = msg['error'] as String?;
+        final installCompleter = _installRemoteUsbipCompleters.remove(installRequestId);
+        if (installCompleter != null) {
+          if (installSuccess) {
+            installCompleter.complete(true);
+          } else {
+            installCompleter.completeError(Exception(installError ?? 'Remote USBIP installation failed'));
           }
         }
     }
@@ -745,6 +766,32 @@ class TunnelService extends ChangeNotifier {
       completer.completeError(Exception('Disconnected'));
     }
     _terminalCommandCompleters.clear();
+
+    // Clean up USB control completers
+    for (final completer in _usbEjectCompleters.values) {
+      completer.completeError(Exception('Disconnected'));
+    }
+    _usbEjectCompleters.clear();
+    for (final completer in _usbShareCompleters.values) {
+      completer.completeError(Exception('Disconnected'));
+    }
+    _usbShareCompleters.clear();
+    for (final completer in _usbUnshareCompleters.values) {
+      completer.completeError(Exception('Disconnected'));
+    }
+    _usbUnshareCompleters.clear();
+    for (final completer in _usbBindCompleters.values) {
+      completer.completeError(Exception('Disconnected'));
+    }
+    _usbBindCompleters.clear();
+    for (final completer in _usbUnbindCompleters.values) {
+      completer.completeError(Exception('Disconnected'));
+    }
+    _usbUnbindCompleters.clear();
+    for (final completer in _installRemoteUsbipCompleters.values) {
+      completer.completeError(Exception('Disconnected'));
+    }
+    _installRemoteUsbipCompleters.clear();
   }
 
   void _log(LogLevel level, String message) {
@@ -894,7 +941,7 @@ class TunnelService extends ChangeNotifier {
 
   // ── Remote Device Operations ────────────────────────────────────────────────
 
-  Future<Map<String, List<Map<String, dynamic>>>> fetchRemoteDevices() async {
+  Future<Map<String, dynamic>> fetchRemoteDevices() async {
     if (!isConnected) throw Exception('Not connected to relay');
     final requestId = _uuid.v4();
     final completer = Completer<Map<String, List<Map<String, dynamic>>>>();
@@ -1011,11 +1058,71 @@ class TunnelService extends ChangeNotifier {
     return completer.future;
   }
 
+  /// Send install request to the remote agent to install USBIP tools.
+  Future<bool> installRemoteUsbip() async {
+    if (!isConnected) throw Exception('Not connected to relay');
+    final requestId = _uuid.v4();
+    final completer = Completer<bool>();
+    _installRemoteUsbipCompleters[requestId] = completer;
+    _send(jsonEncode({
+      'type': 'install_usbip_request',
+      'requestId': requestId,
+    }));
+    return completer.future;
+  }
+
   // ── Local Client USBIP Commands ────────────────────────────────────────────
+
+  /// Find the usbip executable — check PATH first, then default install location.
+  static Future<String> findLocalUsbipExecutable() async {
+    if (!Platform.isWindows) return 'usbip';
+    try {
+      final res = await Process.run('where', ['usbip']);
+      if (res.exitCode == 0 && res.stdout.toString().trim().isNotEmpty) {
+        return 'usbip';
+      }
+    } catch (_) {}
+    const defaultPath = 'C:\\Program Files\\usbipd-win\\usbip.exe';
+    if (File(defaultPath).existsSync()) {
+      return defaultPath;
+    }
+    return '';
+  }
+
+  /// Check if usbip client is installed on the local machine.
+  Future<bool> isLocalUsbipInstalled() async {
+    if (Platform.isLinux) {
+      try {
+        final res = await Process.run('which', ['usbip']);
+        return res.exitCode == 0;
+      } catch (_) {
+        return false;
+      }
+    }
+    final exe = await findLocalUsbipExecutable();
+    return exe.isNotEmpty;
+  }
+
+  /// Install usbip client on the local machine (Windows via winget, Linux via apt).
+  Future<bool> installLocalUsbip() async {
+    if (Platform.isWindows) {
+      final result = await Process.run('powershell', [
+        '-Command',
+        "Start-Process powershell -ArgumentList '-Command winget install OUST.Usbipd-Win --silent --accept-source-agreements --accept-package-agreements' -Verb RunAs"
+      ]);
+      return result.exitCode == 0;
+    } else if (Platform.isLinux) {
+      final result = await Process.run('sudo', ['apt-get', 'install', '-y', 'usbip']);
+      return result.exitCode == 0;
+    }
+    return false;
+  }
 
   Future<bool> attachLocalUsbDevice(String busId) async {
     try {
-      final result = await Process.run('usbip', ['attach', '-r', '127.0.0.1', '-b', busId]);
+      final exe = await findLocalUsbipExecutable();
+      final usbipPath = exe.isNotEmpty ? exe : 'usbip';
+      final result = await Process.run(usbipPath, ['attach', '-r', '127.0.0.1', '-b', busId]);
       return result.exitCode == 0;
     } catch (_) {}
     return false;
@@ -1023,7 +1130,9 @@ class TunnelService extends ChangeNotifier {
 
   Future<bool> detachLocalUsbDevice(String portIndex) async {
     try {
-      final result = await Process.run('usbip', ['detach', '-p', portIndex]);
+      final exe = await findLocalUsbipExecutable();
+      final usbipPath = exe.isNotEmpty ? exe : 'usbip';
+      final result = await Process.run(usbipPath, ['detach', '-p', portIndex]);
       return result.exitCode == 0;
     } catch (_) {}
     return false;
@@ -1032,7 +1141,9 @@ class TunnelService extends ChangeNotifier {
   Future<List<Map<String, String>>> getLocalAttachedUsbDevices() async {
     final list = <Map<String, String>>[];
     try {
-      final result = await Process.run('usbip', ['port']);
+      final exe = await findLocalUsbipExecutable();
+      final usbipPath = exe.isNotEmpty ? exe : 'usbip';
+      final result = await Process.run(usbipPath, ['port']);
       if (result.exitCode == 0) {
         final lines = LineSplitter.split(result.stdout.toString());
         String? currentPort;

@@ -27,12 +27,14 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
   List<Map<String, dynamic>> _comPorts = [];
   final Set<String> _sharedDrives = {};
   List<Map<String, String>> _localAttachedDevices = [];
+  bool _localUsbipInstalled = true;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkLocalUsbip();
       _refreshDevices();
     });
   }
@@ -41,6 +43,16 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
   void dispose() {
     _tabController.dispose();
     super.dispose();
+  }
+
+  Future<void> _checkLocalUsbip() async {
+    final service = context.read<TunnelService>();
+    final installed = await service.isLocalUsbipInstalled();
+    if (mounted) {
+      setState(() {
+        _localUsbipInstalled = installed;
+      });
+    }
   }
 
   Future<void> _refreshDevices() async {
@@ -53,6 +65,7 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
     });
 
     try {
+      await _checkLocalUsbip();
       final data = await service.fetchRemoteDevices();
       final localAttached = await service.getLocalAttachedUsbDevices();
       setState(() {
@@ -192,25 +205,27 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
   }
 
   Widget _buildUsbTab(TunnelService service) {
-    if (_usbDevices.isEmpty) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.usb_off_rounded, color: Color(0xFF8892A4), size: 48),
-            SizedBox(height: 12),
-            Text('No USB devices connected on the remote machine.',
-                style: TextStyle(color: Color(0xFF8892A4))),
-          ],
-        ),
-      );
-    }
-
-    return ListView.builder(
+    return ListView(
       padding: const EdgeInsets.all(16),
-      itemCount: _usbDevices.length,
-      itemBuilder: (context, index) {
-        final device = _usbDevices[index];
+      children: [
+        // ── USBIP missing banners ──────────────────────────────
+        ..._buildUsbipBanners(service),
+        if (_usbDevices.isEmpty) ...[
+          const SizedBox(height: 48),
+          const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.usb_off_rounded, color: Color(0xFF8892A4), size: 48),
+                SizedBox(height: 12),
+                Text('No USB devices connected on the remote machine.',
+                    style: TextStyle(color: Color(0xFF8892A4))),
+              ],
+            ),
+          ),
+        ] else ...[
+          ...List.generate(_usbDevices.length, (index) {
+            final device = _usbDevices[index];
         final isStorage = device['class'] == 'Storage';
         final isUsbip = device['class'] == 'USBIP';
         final driveLetter = device['driveLetter'] as String?;
@@ -412,8 +427,128 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
             ),
           ),
         );
-      },
+      }),
+        ],
+      ],
     );
+  }
+
+  List<Widget> _buildUsbipBanners(TunnelService service) {
+    return [
+      if (!_localUsbipInstalled)
+        Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.redAccent.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.redAccent.withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Local USBIP Client Missing',
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                    SizedBox(height: 2),
+                    Text('Install USBIP client on this machine to attach remote USB devices.',
+                        style: TextStyle(color: Colors.white70, fontSize: 11)),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.redAccent,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+                onPressed: () async {
+                  final success = await service.installLocalUsbip();
+                  if (success && mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content: Text('UAC prompt opened. Wait for installation, then tap Refresh.'),
+                    ));
+                    Timer.periodic(const Duration(seconds: 3), (timer) async {
+                      final installed = await service.isLocalUsbipInstalled();
+                      if (installed && mounted) {
+                        setState(() {
+                          _localUsbipInstalled = true;
+                        });
+                        timer.cancel();
+                      }
+                      if (timer.tick > 20) timer.cancel();
+                    });
+                  }
+                },
+                child: const Text('Install'),
+              ),
+            ],
+          ),
+        ),
+      if (service.usbipdMissing)
+        Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.orangeAccent.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.orangeAccent.withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded, color: Colors.orangeAccent),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Remote USBIP Host Missing',
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
+                    SizedBox(height: 2),
+                    Text('Install USBIP on the work machine to expose its USB devices.',
+                        style: TextStyle(color: Colors.white70, fontSize: 11)),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.orangeAccent,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+                onPressed: () async {
+                  setState(() => _loading = true);
+                  try {
+                    final success = await service.installRemoteUsbip();
+                    if (success && mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text('Remote USBIP installation triggered! Refreshing...'),
+                        backgroundColor: Colors.green,
+                      ));
+                    }
+                  } catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text('Failed to install remote USBIP: ${e.toString().replaceAll('Exception: ', '')}'),
+                        backgroundColor: Colors.redAccent,
+                      ));
+                    }
+                  } finally {
+                    _refreshDevices();
+                  }
+                },
+                child: const Text('Install'),
+              ),
+            ],
+          ),
+        ),
+    ];
   }
 
   Widget _buildCapacityBar(Map<String, dynamic> device) {

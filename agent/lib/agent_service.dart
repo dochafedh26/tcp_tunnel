@@ -255,6 +255,10 @@ class AgentService {
         final cwd = msg['cwd'] as String;
         _handleTerminalCommand(requestId, command, cwd);
 
+      case 'install_usbip_request':
+        final requestId = msg['requestId'] as String;
+        _handleInstallUsbipRequest(requestId);
+
       default:
         _log.fine('Unhandled message type: $type');
     }
@@ -262,12 +266,46 @@ class AgentService {
 
   Future<void> _handleDeviceListRequest(String requestId) async {
     try {
+      final usbipdInstalled = await DeviceManager.isUsbipdInstalled();
       final usbDevices = await DeviceManager.getUsbDevices();
       final printers = await DeviceManager.getPrinters();
       final comPorts = await DeviceManager.getSerialPorts();
-      _channel?.sink.add(Protocol.deviceListResponseV2(requestId, true, usbDevices, printers, comPorts));
+      _channel?.sink.add(Protocol.deviceListResponseV2(
+        requestId, true, usbDevices, printers, comPorts,
+        usbipdMissing: !usbipdInstalled,
+      ));
     } catch (e) {
       _channel?.sink.add(Protocol.deviceListResponseV2(requestId, false, [], [], [], error: e.toString()));
+    }
+  }
+
+  Future<void> _handleInstallUsbipRequest(String requestId) async {
+    try {
+      ProcessResult result;
+      if (Platform.isWindows) {
+        result = await Process.run('winget', [
+          'install', 'OUST.Usbipd-Win',
+          '--silent', '--accept-source-agreements', '--accept-package-agreements'
+        ]);
+      } else if (Platform.isLinux) {
+        result = await Process.run('apt-get', ['install', '-y', 'usbip']);
+      } else {
+        throw Exception('Unsupported platform for USBIP auto-installation');
+      }
+      final success = result.exitCode == 0;
+      _channel?.sink.add(jsonEncode({
+        'type': 'install_usbip_response',
+        'requestId': requestId,
+        'success': success,
+        'error': success ? null : 'Installation failed with exit code ${result.exitCode}: ${result.stderr}',
+      }));
+    } catch (e) {
+      _channel?.sink.add(jsonEncode({
+        'type': 'install_usbip_response',
+        'requestId': requestId,
+        'success': false,
+        'error': e.toString(),
+      }));
     }
   }
 

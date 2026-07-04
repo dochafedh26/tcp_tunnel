@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
-import '../../models/tunnel_config.dart';
+import '../models/tunnel_config.dart';
 
 /// Dialog to add or edit a tunnel forwarding rule.
 class AddTunnelDialog extends StatefulWidget {

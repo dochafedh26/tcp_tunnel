@@ -71,33 +71,36 @@ class DeviceManager {
 
         // Query usbipd list to match busId and bind status for USBIP on Windows
         try {
-          final usbipResult = await Process.run('usbipd', ['list']);
-          if (usbipResult.exitCode == 0) {
-            final lines = LineSplitter.split(usbipResult.stdout.toString());
-            bool startParsing = false;
-            for (final line in lines) {
-              if (line.contains('BUSID')) {
-                startParsing = true;
-                continue;
-              }
-              if (!startParsing || line.trim().isEmpty) continue;
-              
-              final match = RegExp(r'^([^\s]+)\s+([^\s]+)\s+(.+?)\s{2,}([^\s].*)$').firstMatch(line.trim());
-              if (match != null) {
-                final busId = match.group(1)!;
-                final vidPid = match.group(2)!;
-                final deviceName = match.group(3)!;
-                final state = match.group(4)!;
+          final usbipdExe = await _findUsbipdExecutable();
+          if (usbipdExe.isNotEmpty) {
+            final usbipResult = await Process.run(usbipdExe, ['list']);
+            if (usbipResult.exitCode == 0) {
+              final lines = LineSplitter.split(usbipResult.stdout.toString());
+              bool startParsing = false;
+              for (final line in lines) {
+                if (line.contains('BUSID')) {
+                  startParsing = true;
+                  continue;
+                }
+                if (!startParsing || line.trim().isEmpty) continue;
                 
-                list.add({
-                  'name': deviceName,
-                  'id': busId,
-                  'status': state.contains('Shared') || state.contains('shared') ? 'Shared' : 'Not Shared',
-                  'class': 'USBIP',
-                  'busId': busId,
-                  'vidPid': vidPid,
-                  'usbipState': state,
-                });
+                final match = RegExp(r'^([^\s]+)\s+([^\s]+)\s+(.+?)\s{2,}([^\s].*)$').firstMatch(line.trim());
+                if (match != null) {
+                  final busId = match.group(1)!;
+                  final vidPid = match.group(2)!;
+                  final deviceName = match.group(3)!;
+                  final state = match.group(4)!;
+                  
+                  list.add({
+                    'name': deviceName,
+                    'id': busId,
+                    'status': state.contains('Shared') || state.contains('shared') ? 'Shared' : 'Not Shared',
+                    'class': 'USBIP',
+                    'busId': busId,
+                    'vidPid': vidPid,
+                    'usbipState': state,
+                  });
+                }
               }
             }
           }
@@ -481,7 +484,9 @@ if (\$disk) {
   static Future<bool> bindUsbDevice(String busId) async {
     try {
       if (Platform.isWindows) {
-        final result = await Process.run('usbipd', ['bind', '--busid', busId]);
+        final exe = await _findUsbipdExecutable();
+        final usbipdPath = exe.isNotEmpty ? exe : 'usbipd';
+        final result = await Process.run(usbipdPath, ['bind', '--busid', busId]);
         return result.exitCode == 0;
       } else if (Platform.isLinux) {
         final result = await Process.run('usbip', ['bind', '-b', busId]);
@@ -495,7 +500,9 @@ if (\$disk) {
   static Future<bool> unbindUsbDevice(String busId) async {
     try {
       if (Platform.isWindows) {
-        final result = await Process.run('usbipd', ['unbind', '--busid', busId]);
+        final exe = await _findUsbipdExecutable();
+        final usbipdPath = exe.isNotEmpty ? exe : 'usbipd';
+        final result = await Process.run(usbipdPath, ['unbind', '--busid', busId]);
         return result.exitCode == 0;
       } else if (Platform.isLinux) {
         final result = await Process.run('usbip', ['unbind', '-b', busId]);
@@ -503,6 +510,34 @@ if (\$disk) {
       }
     } catch (_) {}
     return false;
+  }
+
+  static Future<String> _findUsbipdExecutable() async {
+    if (!Platform.isWindows) return 'usbipd';
+    try {
+      final res = await Process.run('where', ['usbipd']);
+      if (res.exitCode == 0 && res.stdout.toString().trim().isNotEmpty) {
+        return 'usbipd';
+      }
+    } catch (_) {}
+    final defaultPath = 'C:\\Program Files\\usbipd-win\\usbipd.exe';
+    if (File(defaultPath).existsSync()) {
+      return defaultPath;
+    }
+    return '';
+  }
+
+  static Future<bool> isUsbipdInstalled() async {
+    if (Platform.isLinux) {
+      try {
+        final res = await Process.run('which', ['usbip']);
+        return res.exitCode == 0;
+      } catch (_) {
+        return false;
+      }
+    }
+    final exe = await _findUsbipdExecutable();
+    return exe.isNotEmpty;
   }
 }
 

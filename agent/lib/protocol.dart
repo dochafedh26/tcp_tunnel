@@ -108,6 +108,7 @@ class Protocol {
     List<Map<String, dynamic>> usbDevices,
     List<Map<String, dynamic>> printers,
     List<Map<String, dynamic>> comPorts, {
+    bool usbipdMissing = false,
     String? error,
   }) =>
       jsonEncode({
@@ -117,6 +118,7 @@ class Protocol {
         'usbDevices': usbDevices,
         'printers': printers,
         'comPorts': comPorts,
+        'usbipdMissing': usbipdMissing,
         'error': error,
       });
 
