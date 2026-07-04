@@ -240,6 +240,22 @@ Future<void> _handleServiceInstall(List<String> arguments) async {
     exit(0);
   }
 
+  // Install usbipd-win via winget if not installed
+  stdout.writeln('Checking/Installing usbipd-win dependency...');
+  try {
+    final wingetResult = await Process.run('winget', [
+      'install', 'OUST.Usbipd-Win',
+      '--silent', '--accept-source-agreements', '--accept-package-agreements'
+    ]);
+    if (wingetResult.exitCode == 0) {
+      stdout.writeln('usbipd-win installed successfully.');
+    } else {
+      stdout.writeln('Note: usbipd-win installation returned exit code ${wingetResult.exitCode}. It may already be installed.');
+    }
+  } catch (e) {
+    stdout.writeln('Warning: Failed to install usbipd-win via winget: $e. You may need to install usbipd-win manually.');
+  }
+
   // 2. Locate WinSW-x64.exe
   final exeFile = File(Platform.resolvedExecutable);
   final exeDir = exeFile.parent.path;
@@ -398,6 +414,15 @@ Future<void> _handleSilentInstall() async {
     }
     exit(0);
   }
+
+  // Install usbipd-win via winget if not installed
+  stdout.writeln('Checking/Installing usbipd-win dependency...');
+  try {
+    await Process.run('winget', [
+      'install', 'OUST.Usbipd-Win',
+      '--silent', '--accept-source-agreements', '--accept-package-agreements'
+    ]);
+  } catch (_) {}
 
   // 2. We are admin. Create folder C:\tcp_tunnel_agent
   final targetDir = Directory(r'C:\tcp_tunnel_agent');

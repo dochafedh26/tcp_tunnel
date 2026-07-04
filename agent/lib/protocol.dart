@@ -145,6 +145,22 @@ class Protocol {
         'error': error,
       });
 
+  static String usbBindResponse(String requestId, bool success, {String? error}) =>
+      jsonEncode({
+        'type': 'usb_bind_response',
+        'requestId': requestId,
+        'success': success,
+        'error': error,
+      });
+
+  static String usbUnbindResponse(String requestId, bool success, {String? error}) =>
+      jsonEncode({
+        'type': 'usb_unbind_response',
+        'requestId': requestId,
+        'success': success,
+        'error': error,
+      });
+
   // ── Binary frame codec ────────────────────────────────────────────────────
 
   /// Encode a [data] payload into a binary data frame for [channelId].

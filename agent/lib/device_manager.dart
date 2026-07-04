@@ -68,6 +68,40 @@ class DeviceManager {
             addStorageItem(decodedStorage);
           }
         }
+
+        // Query usbipd list to match busId and bind status for USBIP on Windows
+        try {
+          final usbipResult = await Process.run('usbipd', ['list']);
+          if (usbipResult.exitCode == 0) {
+            final lines = LineSplitter.split(usbipResult.stdout.toString());
+            bool startParsing = false;
+            for (final line in lines) {
+              if (line.contains('BUSID')) {
+                startParsing = true;
+                continue;
+              }
+              if (!startParsing || line.trim().isEmpty) continue;
+              
+              final match = RegExp(r'^([^\s]+)\s+([^\s]+)\s+(.+?)\s{2,}([^\s].*)$').firstMatch(line.trim());
+              if (match != null) {
+                final busId = match.group(1)!;
+                final vidPid = match.group(2)!;
+                final deviceName = match.group(3)!;
+                final state = match.group(4)!;
+                
+                list.add({
+                  'name': deviceName,
+                  'id': busId,
+                  'status': state.contains('Shared') || state.contains('shared') ? 'Shared' : 'Not Shared',
+                  'class': 'USBIP',
+                  'busId': busId,
+                  'vidPid': vidPid,
+                  'usbipState': state,
+                });
+              }
+            }
+          }
+        } catch (_) {}
       } else if (Platform.isLinux) {
         // Parse lsusb
         final result = await Process.run('lsusb', []);
@@ -105,6 +139,33 @@ class DeviceManager {
             }
           }
         }
+
+        // Query usbip list on Linux
+        try {
+          final usbipResult = await Process.run('usbip', ['list', '-l']);
+          if (usbipResult.exitCode == 0) {
+            final lines = LineSplitter.split(usbipResult.stdout.toString());
+            String? currentBusId;
+            for (final line in lines) {
+              if (line.startsWith(' - busid')) {
+                final parts = line.split('busid ');
+                if (parts.length > 1) {
+                  currentBusId = parts[1].split(' (').first.trim();
+                }
+              } else if (line.startsWith('    ') && currentBusId != null) {
+                final deviceName = line.trim();
+                list.add({
+                  'name': deviceName,
+                  'id': currentBusId,
+                  'status': 'OK',
+                  'class': 'USBIP',
+                  'busId': currentBusId,
+                });
+                currentBusId = null;
+              }
+            }
+          }
+        } catch (_) {}
       }
     } catch (_) {}
     return list;
@@ -411,6 +472,34 @@ if (\$disk) {
           'Remove-SmbShare -Name "$shareName" -Force -ErrorAction Stop; Write-Output "OK"'
         ]);
         return result.exitCode == 0 && result.stdout.toString().contains('OK');
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// Bind a USB device for USBIP forwarding.
+  static Future<bool> bindUsbDevice(String busId) async {
+    try {
+      if (Platform.isWindows) {
+        final result = await Process.run('usbipd', ['bind', '--busid', busId]);
+        return result.exitCode == 0;
+      } else if (Platform.isLinux) {
+        final result = await Process.run('usbip', ['bind', '-b', busId]);
+        return result.exitCode == 0;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// Unbind a USB device from USBIP forwarding.
+  static Future<bool> unbindUsbDevice(String busId) async {
+    try {
+      if (Platform.isWindows) {
+        final result = await Process.run('usbipd', ['unbind', '--busid', busId]);
+        return result.exitCode == 0;
+      } else if (Platform.isLinux) {
+        final result = await Process.run('usbip', ['unbind', '-b', busId]);
+        return result.exitCode == 0;
       }
     } catch (_) {}
     return false;

@@ -232,6 +232,16 @@ class AgentService {
         final shareName = msg['shareName'] as String;
         _handleUsbUnshareRequest(requestId, shareName);
 
+      case 'usb_bind_request':
+        final requestId = msg['requestId'] as String;
+        final busId = msg['busId'] as String;
+        _handleUsbBindRequest(requestId, busId);
+
+      case 'usb_unbind_request':
+        final requestId = msg['requestId'] as String;
+        final busId = msg['busId'] as String;
+        _handleUsbUnbindRequest(requestId, busId);
+
       case 'print_job_request':
         final requestId = msg['requestId'] as String;
         final filePath = msg['filePath'] as String;
@@ -288,6 +298,26 @@ class AgentService {
           error: success ? null : 'Failed to remove share'));
     } catch (e) {
       _channel?.sink.add(Protocol.usbUnshareResponse(requestId, false, error: e.toString()));
+    }
+  }
+
+  Future<void> _handleUsbBindRequest(String requestId, String busId) async {
+    try {
+      final success = await DeviceManager.bindUsbDevice(busId);
+      _channel?.sink.add(Protocol.usbBindResponse(requestId, success,
+          error: success ? null : 'Failed to bind device via usbip'));
+    } catch (e) {
+      _channel?.sink.add(Protocol.usbBindResponse(requestId, false, error: e.toString()));
+    }
+  }
+
+  Future<void> _handleUsbUnbindRequest(String requestId, String busId) async {
+    try {
+      final success = await DeviceManager.unbindUsbDevice(busId);
+      _channel?.sink.add(Protocol.usbUnbindResponse(requestId, success,
+          error: success ? null : 'Failed to unbind device'));
+    } catch (e) {
+      _channel?.sink.add(Protocol.usbUnbindResponse(requestId, false, error: e.toString()));
     }
   }
 

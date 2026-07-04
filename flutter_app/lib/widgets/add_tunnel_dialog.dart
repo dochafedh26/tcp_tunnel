@@ -21,11 +21,13 @@ class _AddTunnelDialogState extends State<AddTunnelDialog> {
   late TextEditingController _remoteHostCtrl;
   late TextEditingController _remotePortCtrl;
   bool _enabled = true;
+  bool _isUsbip = false;
 
   @override
   void initState() {
     super.initState();
     final e = widget.existing;
+    _isUsbip = e?.localPort == 3240 && e?.remotePort == 3240 && e?.remoteHost == 'localhost';
     _nameCtrl = TextEditingController(text: e?.name ?? '');
     _localPortCtrl = TextEditingController(text: e?.localPort.toString() ?? '');
     _remoteHostCtrl = TextEditingController(text: e?.remoteHost ?? '');
@@ -103,12 +105,39 @@ class _AddTunnelDialogState extends State<AddTunnelDialog> {
                 ),
                 const SizedBox(height: 24),
 
+                // ── USBIP Option ─────────────────────────────────────────
+                Row(
+                  children: [
+                    const Icon(Icons.cable_rounded, color: Colors.orange, size: 20),
+                    const SizedBox(width: 8),
+                    const Text('Remote USB (USBIP) Tunnel', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+                    const Spacer(),
+                    Switch(
+                      value: _isUsbip,
+                      activeThumbColor: Colors.orange,
+                      onChanged: (v) {
+                        setState(() {
+                          _isUsbip = v;
+                          if (_isUsbip) {
+                            _nameCtrl.text = "USBIP (Auto)";
+                            _localPortCtrl.text = "3240";
+                            _remoteHostCtrl.text = "localhost";
+                            _remotePortCtrl.text = "3240";
+                          }
+                        });
+                      },
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+
                 // ── Name ─────────────────────────────────────────────────
                 _Field(
                   controller: _nameCtrl,
                   label: 'Tunnel Name',
                   hint: 'e.g. RDP Work PC',
                   icon: Icons.label_outline,
+                  readOnly: _isUsbip,
                   validator: (v) => (v?.trim().isEmpty ?? true) ? 'Name required' : null,
                 ),
                 const SizedBox(height: 16),
@@ -121,6 +150,7 @@ class _AddTunnelDialogState extends State<AddTunnelDialog> {
                   icon: Icons.laptop_outlined,
                   keyboardType: TextInputType.number,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  readOnly: _isUsbip,
                   validator: (v) {
                     final n = int.tryParse(v ?? '');
                     if (n == null || n < 1 || n > 65535) return 'Enter a valid port (1–65535)';
@@ -139,6 +169,7 @@ class _AddTunnelDialogState extends State<AddTunnelDialog> {
                         label: 'Remote Host',
                         hint: 'e.g. 192.168.1.10',
                         icon: Icons.dns_outlined,
+                        readOnly: _isUsbip,
                         validator: (v) => (v?.trim().isEmpty ?? true) ? 'Host required' : null,
                       ),
                     ),
@@ -152,6 +183,7 @@ class _AddTunnelDialogState extends State<AddTunnelDialog> {
                         icon: Icons.settings_ethernet,
                         keyboardType: TextInputType.number,
                         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                        readOnly: _isUsbip,
                         validator: (v) {
                           final n = int.tryParse(v ?? '');
                           if (n == null || n < 1 || n > 65535) return 'Invalid';
@@ -226,6 +258,7 @@ class _Field extends StatelessWidget {
   final TextInputType? keyboardType;
   final List<TextInputFormatter>? inputFormatters;
   final FormFieldValidator<String>? validator;
+  final bool readOnly;
 
   const _Field({
     required this.controller,
@@ -235,6 +268,7 @@ class _Field extends StatelessWidget {
     this.keyboardType,
     this.inputFormatters,
     this.validator,
+    this.readOnly = false,
   });
 
   @override
@@ -243,15 +277,19 @@ class _Field extends StatelessWidget {
         keyboardType: keyboardType,
         inputFormatters: inputFormatters,
         validator: validator,
-        style: const TextStyle(color: Colors.white, fontSize: 14),
+        readOnly: readOnly,
+        style: TextStyle(
+          color: readOnly ? Colors.white54 : Colors.white,
+          fontSize: 14,
+        ),
         decoration: InputDecoration(
           labelText: label,
           hintText: hint,
-          prefixIcon: Icon(icon, size: 18, color: const Color(0xFF00BFA5)),
+          prefixIcon: Icon(icon, size: 18, color: readOnly ? Colors.grey : const Color(0xFF00BFA5)),
           labelStyle: const TextStyle(color: Color(0xFF8892A4), fontSize: 13),
           hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.2), fontSize: 13),
           filled: true,
-          fillColor: const Color(0xFF0A0E1A),
+          fillColor: readOnly ? const Color(0xFF131722) : const Color(0xFF0A0E1A),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
             borderSide: const BorderSide(color: Color(0xFF2A3450)),
@@ -262,7 +300,7 @@ class _Field extends StatelessWidget {
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: const BorderSide(color: Color(0xFF00BFA5), width: 1.5),
+            borderSide: BorderSide(color: readOnly ? const Color(0xFF2A3450) : const Color(0xFF00BFA5), width: 1.5),
           ),
           errorBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),

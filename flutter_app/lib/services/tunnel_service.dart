@@ -59,6 +59,8 @@ class TunnelService extends ChangeNotifier {
   final Map<String, Completer<bool>> _usbEjectCompleters = {};
   final Map<String, Completer<bool>> _usbShareCompleters = {};
   final Map<String, Completer<bool>> _usbUnshareCompleters = {};
+  final Map<String, Completer<bool>> _usbBindCompleters = {};
+  final Map<String, Completer<bool>> _usbUnbindCompleters = {};
 
   // ── Stats ──────────────────────────────────────────────────────────────────
   int _bytesIn = 0;
@@ -534,6 +536,32 @@ class TunnelService extends ChangeNotifier {
             completer.completeError(Exception(error ?? 'Unshare failed'));
           }
         }
+
+      case 'usb_bind_response':
+        final requestId = msg['requestId'] as String;
+        final success = msg['success'] as bool;
+        final error = msg['error'] as String?;
+        final completer = _usbBindCompleters.remove(requestId);
+        if (completer != null) {
+          if (success) {
+            completer.complete(true);
+          } else {
+            completer.completeError(Exception(error ?? 'USBIP Bind failed'));
+          }
+        }
+
+      case 'usb_unbind_response':
+        final requestId = msg['requestId'] as String;
+        final success = msg['success'] as bool;
+        final error = msg['error'] as String?;
+        final completer = _usbUnbindCompleters.remove(requestId);
+        if (completer != null) {
+          if (success) {
+            completer.complete(true);
+          } else {
+            completer.completeError(Exception(error ?? 'USBIP Unbind failed'));
+          }
+        }
     }
   }
 
@@ -953,6 +981,82 @@ class TunnelService extends ChangeNotifier {
       'shareName': shareName,
     }));
     return completer.future;
+  }
+
+  // ── Remote USBIP Bind / Unbind ─────────────────────────────────────────────
+
+  Future<bool> bindRemoteUsbDevice(String busId) async {
+    if (!isConnected) throw Exception('Not connected to relay');
+    final requestId = _uuid.v4();
+    final completer = Completer<bool>();
+    _usbBindCompleters[requestId] = completer;
+    _send(jsonEncode({
+      'type': 'usb_bind_request',
+      'requestId': requestId,
+      'busId': busId,
+    }));
+    return completer.future;
+  }
+
+  Future<bool> unbindRemoteUsbDevice(String busId) async {
+    if (!isConnected) throw Exception('Not connected to relay');
+    final requestId = _uuid.v4();
+    final completer = Completer<bool>();
+    _usbUnbindCompleters[requestId] = completer;
+    _send(jsonEncode({
+      'type': 'usb_unbind_request',
+      'requestId': requestId,
+      'busId': busId,
+    }));
+    return completer.future;
+  }
+
+  // ── Local Client USBIP Commands ────────────────────────────────────────────
+
+  Future<bool> attachLocalUsbDevice(String busId) async {
+    try {
+      final result = await Process.run('usbip', ['attach', '-r', '127.0.0.1', '-b', busId]);
+      return result.exitCode == 0;
+    } catch (_) {}
+    return false;
+  }
+
+  Future<bool> detachLocalUsbDevice(String portIndex) async {
+    try {
+      final result = await Process.run('usbip', ['detach', '-p', portIndex]);
+      return result.exitCode == 0;
+    } catch (_) {}
+    return false;
+  }
+
+  Future<List<Map<String, String>>> getLocalAttachedUsbDevices() async {
+    final list = <Map<String, String>>[];
+    try {
+      final result = await Process.run('usbip', ['port']);
+      if (result.exitCode == 0) {
+        final lines = LineSplitter.split(result.stdout.toString());
+        String? currentPort;
+        for (final line in lines) {
+          if (line.startsWith('Port ')) {
+            final match = RegExp(r'^Port (\d+):').firstMatch(line);
+            if (match != null) {
+              currentPort = match.group(1);
+            }
+          } else if (line.contains('127.0.0.1') && currentPort != null) {
+            // e.g. "127.0.0.1 (1-1)"
+            final match = RegExp(r'\(([^)]+)\)').firstMatch(line);
+            if (match != null) {
+              list.add({
+                'port': currentPort,
+                'busId': match.group(1)!,
+              });
+            }
+            currentPort = null;
+          }
+        }
+      }
+    } catch (_) {}
+    return list;
   }
 
   @override

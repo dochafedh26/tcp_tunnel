@@ -4,7 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:uuid/uuid.dart';
 import '../services/tunnel_service.dart';
+import '../services/settings_service.dart';
+import '../models/tunnel_config.dart';
 
 class DevicesScreen extends StatefulWidget {
   final Function(int)? onTabChange;
@@ -23,6 +26,7 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
   List<Map<String, dynamic>> _printers = [];
   List<Map<String, dynamic>> _comPorts = [];
   final Set<String> _sharedDrives = {};
+  List<Map<String, String>> _localAttachedDevices = [];
 
   @override
   void initState() {
@@ -50,10 +54,12 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
 
     try {
       final data = await service.fetchRemoteDevices();
+      final localAttached = await service.getLocalAttachedUsbDevices();
       setState(() {
         _usbDevices = List<Map<String, dynamic>>.from(data['usbDevices'] ?? []);
         _printers = List<Map<String, dynamic>>.from(data['printers'] ?? []);
         _comPorts = List<Map<String, dynamic>>.from(data['comPorts'] ?? []);
+        _localAttachedDevices = localAttached;
         _loading = false;
       });
     } catch (e) {
@@ -206,15 +212,27 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
       itemBuilder: (context, index) {
         final device = _usbDevices[index];
         final isStorage = device['class'] == 'Storage';
+        final isUsbip = device['class'] == 'USBIP';
         final driveLetter = device['driveLetter'] as String?;
         final isShared = driveLetter != null && _sharedDrives.contains(driveLetter);
+
+        // Check if attached locally
+        final busId = device['busId'] as String?;
+        final localAttach = _localAttachedDevices.firstWhere(
+          (d) => d['busId'] == busId,
+          orElse: () => {},
+        );
+        final isAttachedLocally = localAttach.isNotEmpty;
+        final localPort = localAttach['port'];
 
         return Card(
           color: const Color(0xFF0F1629),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
             side: BorderSide(
-              color: isShared ? const Color(0xFF00BFA5).withValues(alpha: 0.5) : const Color(0xFF1A2340),
+              color: isAttachedLocally
+                  ? Colors.blue.withValues(alpha: 0.5)
+                  : (isShared ? const Color(0xFF00BFA5).withValues(alpha: 0.5) : const Color(0xFF1A2340)),
             ),
           ),
           margin: const EdgeInsets.only(bottom: 12),
@@ -228,10 +246,12 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
                     CircleAvatar(
                       backgroundColor: isStorage
                           ? Colors.blue.withValues(alpha: 0.15)
-                          : const Color(0xFF00BFA5).withValues(alpha: 0.15),
+                          : (isUsbip ? Colors.orange.withValues(alpha: 0.15) : const Color(0xFF00BFA5).withValues(alpha: 0.15)),
                       child: Icon(
-                        isStorage ? Icons.folder_open_rounded : Icons.usb_rounded,
-                        color: isStorage ? Colors.blue : const Color(0xFF00BFA5),
+                        isStorage
+                            ? Icons.folder_open_rounded
+                            : (isUsbip ? Icons.cable_rounded : Icons.usb_rounded),
+                        color: isStorage ? Colors.blue : (isUsbip ? Colors.orange : const Color(0xFF00BFA5)),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -266,6 +286,22 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
                                     ],
                                   ),
                                 ),
+                              if (isAttachedLocally)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.blue.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.check_circle_rounded, size: 10, color: Colors.blue),
+                                      SizedBox(width: 3),
+                                      Text('Attached Locally', style: TextStyle(color: Colors.blue, fontSize: 10, fontWeight: FontWeight.bold)),
+                                    ],
+                                  ),
+                                ),
                             ],
                           ),
                           const SizedBox(height: 2),
@@ -273,6 +309,13 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
                             Text(
                               _formatStorageSubtitle(device),
                               style: const TextStyle(color: Color(0xFF8892A4), fontSize: 12),
+                            )
+                          else if (isUsbip)
+                            Text(
+                              'BUSID: ${device['busId'] ?? 'N/A'} · VID:PID: ${device['vidPid'] ?? 'N/A'} · Status: ${device['status'] ?? 'Not Shared'}',
+                              style: const TextStyle(color: Color(0xFF8892A4), fontSize: 12),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             )
                           else
                             Text(
@@ -320,6 +363,31 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
                         color: Colors.redAccent,
                         onPressed: () => _ejectDrive(service, device),
                       ),
+                    ] else if (isUsbip && busId != null) ...[
+                      if (isAttachedLocally) ...[
+                        _actionButton(
+                          icon: Icons.power_settings_new_rounded,
+                          label: 'Detach Local',
+                          color: Colors.redAccent,
+                          onPressed: () => _detachUsbipDevice(service, busId, localPort),
+                        ),
+                      ] else ...[
+                        _actionButton(
+                          icon: Icons.link_rounded,
+                          label: 'Attach Local',
+                          color: const Color(0xFF00BFA5),
+                          onPressed: () => _attachUsbipDevice(service, busId),
+                        ),
+                        if (device['status'] == 'Shared') ...[
+                          const SizedBox(width: 8),
+                          _actionButton(
+                            icon: Icons.link_off_rounded,
+                            label: 'Unbind Remote',
+                            color: Colors.orange,
+                            onPressed: () => _unbindRemoteDevice(service, busId),
+                          ),
+                        ],
+                      ],
                     ] else
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -941,6 +1009,123 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
         );
       },
     );
+  }
+
+  Future<void> _attachUsbipDevice(TunnelService service, String busId) async {
+    setState(() => _loading = true);
+    try {
+      final hasUsbipTunnel = service.tunnels.any((t) => t.enabled && t.localPort == 3240 && t.remotePort == 3240);
+      if (!hasUsbipTunnel) {
+        final settings = context.read<SettingsService>();
+        final existingTunnelIdx = settings.rawTunnels.indexWhere((t) => t['localPort'] == 3240);
+        if (existingTunnelIdx != -1) {
+          final tc = TunnelConfig.fromJson(settings.rawTunnels[existingTunnelIdx]);
+          final updated = tc.copyWith(enabled: true);
+          service.updateTunnel(updated);
+          final updatedAll = List<Map<String, dynamic>>.from(settings.rawTunnels);
+          updatedAll[existingTunnelIdx] = updated.toJson();
+          await settings.saveTunnels(updatedAll);
+        } else {
+          final newTunnel = TunnelConfig(
+            id: const Uuid().v4(),
+            profileId: settings.selectedProfileId,
+            name: 'USBIP Auto-Tunnel',
+            localPort: 3240,
+            remoteHost: 'localhost',
+            remotePort: 3240,
+            enabled: true,
+          );
+          service.addTunnel(newTunnel);
+          final updatedAll = List<Map<String, dynamic>>.from(settings.rawTunnels)..add(newTunnel.toJson());
+          await settings.saveTunnels(updatedAll);
+        }
+        await Future.delayed(const Duration(milliseconds: 1000));
+      }
+
+      final bindSuccess = await service.bindRemoteUsbDevice(busId);
+      if (!bindSuccess) {
+        throw Exception('Failed to bind USB device on remote agent.');
+      }
+
+      final attachSuccess = await service.attachLocalUsbDevice(busId);
+      if (!attachSuccess) {
+        throw Exception('Remote device bound, but local usbip attach failed. Ensure the usbip client is installed locally.');
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('USB device attached successfully!'),
+          backgroundColor: Colors.green,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error: ${e.toString().replaceAll('Exception: ', '')}'),
+          backgroundColor: Colors.redAccent,
+        ));
+      }
+    } finally {
+      _refreshDevices();
+    }
+  }
+
+  Future<void> _detachUsbipDevice(TunnelService service, String busId, String? localPort) async {
+    setState(() => _loading = true);
+    try {
+      if (localPort != null) {
+        final detachSuccess = await service.detachLocalUsbDevice(localPort);
+        if (!detachSuccess) {
+          throw Exception('Local usbip detach failed.');
+        }
+      }
+
+      final unbindSuccess = await service.unbindRemoteUsbDevice(busId);
+      if (!unbindSuccess) {
+        throw Exception('Failed to unbind USB device on remote agent.');
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('USB device detached successfully.'),
+          backgroundColor: Colors.green,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error detaching: ${e.toString().replaceAll('Exception: ', '')}'),
+          backgroundColor: Colors.redAccent,
+        ));
+      }
+    } finally {
+      _refreshDevices();
+    }
+  }
+
+  Future<void> _unbindRemoteDevice(TunnelService service, String busId) async {
+    setState(() => _loading = true);
+    try {
+      final unbindSuccess = await service.unbindRemoteUsbDevice(busId);
+      if (!unbindSuccess) {
+        throw Exception('Failed to unbind USB device on remote agent.');
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('USB device unbound from remote sharing.'),
+          backgroundColor: Colors.green,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error unbinding: ${e.toString().replaceAll('Exception: ', '')}'),
+          backgroundColor: Colors.redAccent,
+        ));
+      }
+    } finally {
+      _refreshDevices();
+    }
   }
 }
 

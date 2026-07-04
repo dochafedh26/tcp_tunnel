@@ -1,0 +1,24 @@
+Generated new persistent token in agent_settings.json
+╔══════════════════════════════════════════════════════════════════╗
+║                    TCP Tunnel Agent  v1.0.6                      ║
+╚══════════════════════════════════════════════════════════════════╝
+  Relay      : wss://tcptunnel-production.up.railway.app
+  Agent Name : DESKTOP-7GVBG6Q
+  Auth Token : d02131a7-f8bc-4cab-96ae-23c1f3d5a188
+  Shared Dir : D:\DEV-FOLDER\FLUTTER\tcp-tunnel\agent
+  GitHub PAT : Not set
+────────────────────────────────────────────────────────────────────
+  👉 To connect from the Flutter app:
+     1. Open Settings -> Add Machine Profile
+     2. Enter Relay URL: wss://tcptunnel-production.up.railway.app
+     3. Enter Auth Token: d02131a7-f8bc-4cab-96ae-23c1f3d5a188
+     (Or select "DESKTOP-7GVBG6Q" via "Discover Agents" in settings)
+────────────────────────────────────────────────────────────────────
+Press Ctrl+C to stop.
+
+[2026-07-02T15:20:01.695358] [INFO   ] AgentService: Connecting to relay at wss://tcptunnel-production.up.railway.app ...
+[2026-07-02T15:20:01.695358] [INFO   ] AgentService: Auth message sent with hostname: DESKTOP-7GVBG6Q
+[2026-07-02T15:20:02.662415] [INFO   ] AgentService: ✓ Authenticated with relay — agent is ready
+
+Shutting down agent...
+[2026-07-02T15:20:23.738682] [WARNING] AgentService: WebSocket connection closed by relay

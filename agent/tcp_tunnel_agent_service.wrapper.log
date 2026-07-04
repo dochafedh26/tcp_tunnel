@@ -1,0 +1,21 @@
+2026-07-02 15:19:59,975 DEBUG - Starting WinSW in console mode
+2026-07-02 15:20:00,016 INFO  - Installing service 'TCP Tunnel Agent (tcp-tunnel-agent)'...
+2026-07-02 15:20:00,075 INFO  - Service 'TCP Tunnel Agent (tcp-tunnel-agent)' was installed successfully.
+2026-07-02 15:20:00,528 DEBUG - Starting WinSW in console mode
+2026-07-02 15:20:00,563 INFO  - Starting service 'TCP Tunnel Agent (tcp-tunnel-agent)'...
+2026-07-02 15:20:00,964 DEBUG - Starting WinSW in service mode
+2026-07-02 15:20:00,996 INFO  - Service 'TCP Tunnel Agent (tcp-tunnel-agent)' started successfully.
+2026-07-02 15:20:01,138 INFO  - Starting D:\DEV-FOLDER\FLUTTER\tcp-tunnel\agent\agent.exe 
+2026-07-02 15:20:01,173 INFO  - Started process 15148
+2026-07-02 15:20:01,217 DEBUG - Forwarding logs of the process System.Diagnostics.Process (agent) to WinSW.SizeBasedRollingLogAppender
+2026-07-02 15:20:23,671 DEBUG - Starting WinSW in console mode
+2026-07-02 15:20:23,714 INFO  - Stopping service 'TCP Tunnel Agent (tcp-tunnel-agent)'...
+2026-07-02 15:20:23,724 INFO  - Service 'TCP Tunnel Agent (tcp-tunnel-agent)' stopped successfully.
+2026-07-02 15:20:23,726 INFO  - Stopping tcp-tunnel-agent
+2026-07-02 15:20:23,727 DEBUG - ProcessKill 15148
+2026-07-02 15:20:23,733 DEBUG - Stopping process 15148...
+2026-07-02 15:20:24,047 DEBUG - Process 15148 canceled with code 0.
+2026-07-02 15:20:24,057 INFO  - Finished tcp-tunnel-agent
+2026-07-02 15:20:24,148 DEBUG - Starting WinSW in console mode
+2026-07-02 15:20:24,181 INFO  - Uninstalling service 'TCP Tunnel Agent (tcp-tunnel-agent)'...
+2026-07-02 15:20:24,186 INFO  - Service 'TCP Tunnel Agent (tcp-tunnel-agent)' was uninstalled successfully.
