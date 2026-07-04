@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:file_picker/file_picker.dart';
 import '../services/tunnel_service.dart';
 import 'terminal_screen.dart';
 
@@ -271,27 +272,32 @@ class _FileExplorerScreenState extends State<FileExplorerScreen> {
   }
 
   Future<void> _showUploadDialog() async {
-    final ctrl = TextEditingController();
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF0F1629),
-        title: const Text('Upload File', style: TextStyle(color: Colors.white)),
+        title: const Text('Upload to Agent', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Enter local absolute file path:', style: TextStyle(color: Colors.white70, fontSize: 13)),
-            const SizedBox(height: 8),
-            TextField(
-              controller: ctrl,
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
-                hintText: 'e.g., C:\\path\\to\\file.txt',
-                hintStyle: TextStyle(color: Color(0xFF4A5568)),
-                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF1A2340))),
-                focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF00BFA5))),
-              ),
+            ListTile(
+              leading: const Icon(Icons.insert_drive_file_outlined, color: Color(0xFF00BFA5)),
+              title: const Text('Upload File', style: TextStyle(color: Colors.white)),
+              subtitle: const Text('Select a file from local explorer.', style: TextStyle(color: Color(0xFF8892A4), fontSize: 12)),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickAndUploadFile();
+              },
+            ),
+            const Divider(color: Color(0xFF1A2340)),
+            ListTile(
+              leading: const Icon(Icons.folder_open_outlined, color: Colors.orangeAccent),
+              title: const Text('Upload Folder', style: TextStyle(color: Colors.white)),
+              subtitle: const Text('Select a folder from local explorer to upload recursively.', style: TextStyle(color: Color(0xFF8892A4), fontSize: 12)),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickAndUploadFolder();
+              },
             ),
           ],
         ),
@@ -300,20 +306,88 @@ class _FileExplorerScreenState extends State<FileExplorerScreen> {
             onPressed: () => Navigator.pop(ctx),
             child: const Text('Cancel', style: TextStyle(color: Color(0xFF8892A4))),
           ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00BFA5)),
-            onPressed: () {
-              final localPath = ctrl.text.trim();
-              Navigator.pop(ctx);
-              if (localPath.isNotEmpty) {
-                _startUpload(localPath);
-              }
-            },
-            child: const Text('Upload'),
-          ),
         ],
       ),
     );
+  }
+
+  Future<void> _pickAndUploadFile() async {
+    try {
+      final result = await FilePicker.platform.pickFiles();
+      if (result == null || result.files.single.path == null) return;
+      final localPath = result.files.single.path!;
+      _startUpload(localPath);
+    } catch (e) {
+      _showErrorSnackBar('Failed to pick file: $e');
+    }
+  }
+
+  Future<void> _pickAndUploadFolder() async {
+    try {
+      final selectedDirectory = await FilePicker.platform.getDirectoryPath();
+      if (selectedDirectory == null) return;
+      _startFolderUpload(selectedDirectory);
+    } catch (e) {
+      _showErrorSnackBar('Failed to pick folder: $e');
+    }
+  }
+
+  Future<void> _startFolderUpload(String localDirPath) async {
+    final dir = Directory(localDirPath);
+    if (!dir.existsSync()) {
+      _showErrorSnackBar('Local directory does not exist.');
+      return;
+    }
+
+    setState(() {
+      _isTransferring = true;
+      _activeTransferName = 'Preparing folder upload...';
+      _activeTransferProgress = 0.0;
+    });
+
+    try {
+      final files = dir.listSync(recursive: true).whereType<File>().toList();
+      if (files.isEmpty) {
+        _showSuccessSnackBar('Folder is empty, nothing to upload.');
+        return;
+      }
+
+      final dirName = dir.path.split(Platform.pathSeparator).last;
+      final service = context.read<TunnelService>();
+
+      int completed = 0;
+      for (final file in files) {
+        final relativePath = file.path.substring(dir.path.length + 1).replaceAll(Platform.pathSeparator, '/');
+        final remoteDestPath = _currentPath.isEmpty ? '$dirName/$relativePath' : '$_currentPath/$dirName/$relativePath';
+
+        final fileName = file.path.split(Platform.pathSeparator).last;
+        setState(() {
+          _activeTransferName = 'Uploading $fileName ($completed/${files.length})';
+          _activeTransferProgress = completed / files.length;
+        });
+
+        await service.uploadLocalFile(
+          file.path,
+          remoteDestPath,
+          onProgress: (progress) {
+            setState(() {
+              _activeTransferProgress = (completed + progress) / files.length;
+            });
+          },
+        );
+        completed++;
+      }
+
+      _showSuccessSnackBar('Folder uploaded successfully!');
+      _loadDirectory(_currentPath);
+    } catch (e) {
+      _showErrorSnackBar('Folder upload failed: $e');
+    } finally {
+      setState(() {
+        _isTransferring = false;
+        _activeTransferName = null;
+      });
+    }
   }
 
   Future<void> _startUpload(String localPath) async {
