@@ -486,7 +486,7 @@ if (\$disk) {
       if (Platform.isWindows) {
         final exe = await _findUsbipdExecutable();
         final usbipdPath = exe.isNotEmpty ? exe : 'usbipd';
-        final result = await Process.run(usbipdPath, ['bind', '--busid', busId]);
+        final result = await Process.run(usbipdPath, ['bind', '--busid', busId, '--force']);
         return result.exitCode == 0;
       } else if (Platform.isLinux) {
         final result = await Process.run('usbip', ['bind', '-b', busId]);

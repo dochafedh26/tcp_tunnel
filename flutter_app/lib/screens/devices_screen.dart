@@ -56,6 +56,7 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
   }
 
   Future<void> _refreshDevices() async {
+    if (!mounted) return;
     final service = context.read<TunnelService>();
     if (!service.isConnected || !service.peerConnected) return;
 
@@ -66,8 +67,11 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
 
     try {
       await _checkLocalUsbip();
+      if (!mounted) return;
       final data = await service.fetchRemoteDevices();
+      if (!mounted) return;
       final localAttached = await service.getLocalAttachedUsbDevices();
+      if (!mounted) return;
       setState(() {
         _usbDevices = List<Map<String, dynamic>>.from(data['usbDevices'] ?? []);
         _printers = List<Map<String, dynamic>>.from(data['printers'] ?? []);
@@ -76,10 +80,12 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
         _loading = false;
       });
     } catch (e) {
-      setState(() {
-        _error = e.toString().replaceAll('Exception: ', '');
-        _loading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _error = e.toString().replaceAll('Exception: ', '');
+          _loading = false;
+        });
+      }
     }
   }
 
@@ -474,8 +480,16 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
                       content: Text('UAC prompt opened. Wait for installation, then tap Refresh.'),
                     ));
                     Timer.periodic(const Duration(seconds: 3), (timer) async {
+                      if (!mounted) {
+                        timer.cancel();
+                        return;
+                      }
                       final installed = await service.isLocalUsbipInstalled();
-                      if (installed && mounted) {
+                      if (!mounted) {
+                        timer.cancel();
+                        return;
+                      }
+                      if (installed) {
                         setState(() {
                           _localUsbipInstalled = true;
                         });
@@ -1286,12 +1300,17 @@ class _RemoteFilePickerDialogState extends State<_RemoteFilePickerDialog> {
   }
 
   Future<void> _loadDirectory(String path) async {
+    if (!mounted) return;
     setState(() { _loading = true; _error = null; _selectedFile = null; });
     try {
       final items = await widget.service.fetchRemoteFiles(path);
-      setState(() { _items = items; _currentPath = path; _loading = false; });
+      if (mounted) {
+        setState(() { _items = items; _currentPath = path; _loading = false; });
+      }
     } catch (e) {
-      setState(() { _error = e.toString().replaceAll('Exception: ', ''); _loading = false; });
+      if (mounted) {
+        setState(() { _error = e.toString().replaceAll('Exception: ', ''); _loading = false; });
+      }
     }
   }
 

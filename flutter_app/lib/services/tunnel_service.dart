@@ -3,10 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:flutter/services.dart' show rootBundle;
 
 import '../models/log_entry.dart';
 import '../models/tunnel_config.dart';
@@ -944,7 +946,7 @@ class TunnelService extends ChangeNotifier {
   Future<Map<String, dynamic>> fetchRemoteDevices() async {
     if (!isConnected) throw Exception('Not connected to relay');
     final requestId = _uuid.v4();
-    final completer = Completer<Map<String, List<Map<String, dynamic>>>>();
+    final completer = Completer<Map<String, dynamic>>();
     _deviceListCompleters[requestId] = completer;
 
     _send(jsonEncode({
@@ -1073,7 +1075,7 @@ class TunnelService extends ChangeNotifier {
 
   // ── Local Client USBIP Commands ────────────────────────────────────────────
 
-  /// Find the usbip executable — check PATH first, then default install location.
+  /// Find the usbip executable — check PATH first, then default install locations.
   static Future<String> findLocalUsbipExecutable() async {
     if (!Platform.isWindows) return 'usbip';
     try {
@@ -1085,6 +1087,10 @@ class TunnelService extends ChangeNotifier {
     const defaultPath = 'C:\\Program Files\\usbipd-win\\usbip.exe';
     if (File(defaultPath).existsSync()) {
       return defaultPath;
+    }
+    const usbipWin2Path = 'C:\\Program Files\\USBip\\usbip.exe';
+    if (File(usbipWin2Path).existsSync()) {
+      return usbipWin2Path;
     }
     return '';
   }
@@ -1103,14 +1109,28 @@ class TunnelService extends ChangeNotifier {
     return exe.isNotEmpty;
   }
 
-  /// Install usbip client on the local machine (Windows via winget, Linux via apt).
+  /// Install usbip client on the local machine (Windows via bundled assets, Linux via apt).
   Future<bool> installLocalUsbip() async {
     if (Platform.isWindows) {
-      final result = await Process.run('powershell', [
-        '-Command',
-        "Start-Process powershell -ArgumentList '-Command winget install OUST.Usbipd-Win --silent --accept-source-agreements --accept-package-agreements' -Verb RunAs"
-      ]);
-      return result.exitCode == 0;
+      try {
+        final byteData = await rootBundle.load('assets/usbip-win2.exe');
+        final tempDir = await getTemporaryDirectory();
+        final file = File('${tempDir.path}\\usbip-win2.exe');
+        await file.writeAsBytes(byteData.buffer.asUint8List(byteData.offsetInBytes, byteData.lengthInBytes));
+        
+        final result = await Process.run('powershell', [
+          '-Command',
+          "Start-Process -FilePath '${file.path}' -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Verb RunAs -Wait"
+        ]);
+        return result.exitCode == 0;
+      } catch (e) {
+        // Fallback to winget if asset loading or running fails
+        final result = await Process.run('powershell', [
+          '-Command',
+          "Start-Process powershell -ArgumentList '-Command winget install OUST.Usbipd-Win --silent --accept-source-agreements --accept-package-agreements' -Verb RunAs"
+        ]);
+        return result.exitCode == 0;
+      }
     } else if (Platform.isLinux) {
       final result = await Process.run('sudo', ['apt-get', 'install', '-y', 'usbip']);
       return result.exitCode == 0;

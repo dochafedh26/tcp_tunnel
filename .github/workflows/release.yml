@@ -123,14 +123,17 @@ jobs:
           VERSION="${TAG_NAME#v}"
           # Download WinSW
           curl -L -o WinSW-x64.exe https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe
-          # Create a zip bundle containing agent.exe + WinSW-x64.exe + README
+          # Download usbipd-win MSI installer
+          curl -L -o usbipd-win.msi https://github.com/dorssel/usbipd-win/releases/download/v4.3.0/usbipd-win_4.3.0.msi
+          # Create a zip bundle containing agent.exe + WinSW-x64.exe + usbipd-win.msi + README
           mkdir agent_bundle
           cp "agent_windows_$VERSION.exe" agent_bundle/agent_windows_$VERSION.exe
           cp WinSW-x64.exe agent_bundle/WinSW-x64.exe
+          cp usbipd-win.msi agent_bundle/usbipd-win.msi
           cat > agent_bundle/INSTALL.txt << 'EOF'
           TCP Tunnel Agent - Windows Installer
           =====================================
-          1. Keep both files (agent_windows_x.x.x.exe AND WinSW-x64.exe) in the SAME folder.
+          1. Keep the installer files (agent_windows_x.x.x.exe, WinSW-x64.exe, and usbipd-win.msi) in the SAME folder.
           2. Double-click agent_windows_x.x.x.exe to install automatically.
           3. The agent will install itself as a Windows Service and start automatically.
           EOF

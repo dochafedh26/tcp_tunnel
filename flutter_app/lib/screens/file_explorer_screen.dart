@@ -38,6 +38,7 @@ class _FileExplorerScreenState extends State<FileExplorerScreen> {
   }
 
   Future<void> _loadDirectory(String path) async {
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -46,16 +47,20 @@ class _FileExplorerScreenState extends State<FileExplorerScreen> {
     try {
       final service = context.read<TunnelService>();
       final files = await service.fetchRemoteFiles(path);
-      setState(() {
-        _items = files;
-        _currentPath = path;
-        _loading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _items = files;
+          _currentPath = path;
+          _loading = false;
+        });
+      }
     } catch (e) {
-      setState(() {
-        _error = e.toString().replaceAll('Exception: ', '');
-        _loading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _error = e.toString().replaceAll('Exception: ', '');
+          _loading = false;
+        });
+      }
     }
   }
 
@@ -252,22 +257,23 @@ class _FileExplorerScreenState extends State<FileExplorerScreen> {
         remotePath,
         localPath,
         onProgress: (bytesReceived) {
-          // Note: Since we don't send file size in this simple protocol version, 
-          // we update progress by animating it or just displaying bytes.
-          // For UX, let's increment a counter or represent chunk increments.
-          setState(() {
-            _activeTransferProgress = -1.0; // Indeterminate/active state
-          });
+          if (mounted) {
+            setState(() {
+              _activeTransferProgress = -1.0; // Indeterminate/active state
+            });
+          }
         },
       );
       _showSuccessSnackBar('Downloaded "$name" successfully!');
     } catch (e) {
       _showErrorSnackBar('Download failed: $e');
     } finally {
-      setState(() {
-        _isTransferring = false;
-        _activeTransferName = null;
-      });
+      if (mounted) {
+        setState(() {
+          _isTransferring = false;
+          _activeTransferName = null;
+        });
+      }
     }
   }
 
@@ -361,18 +367,22 @@ class _FileExplorerScreenState extends State<FileExplorerScreen> {
         final remoteDestPath = _currentPath.isEmpty ? '$dirName/$relativePath' : '$_currentPath/$dirName/$relativePath';
 
         final fileName = file.path.split(Platform.pathSeparator).last;
-        setState(() {
-          _activeTransferName = 'Uploading $fileName ($completed/${files.length})';
-          _activeTransferProgress = completed / files.length;
-        });
+        if (mounted) {
+          setState(() {
+            _activeTransferName = 'Uploading $fileName ($completed/${files.length})';
+            _activeTransferProgress = completed / files.length;
+          });
+        }
 
         await service.uploadLocalFile(
           file.path,
           remoteDestPath,
           onProgress: (progress) {
-            setState(() {
-              _activeTransferProgress = (completed + progress) / files.length;
-            });
+            if (mounted) {
+              setState(() {
+                _activeTransferProgress = (completed + progress) / files.length;
+              });
+            }
           },
         );
         completed++;
@@ -384,10 +394,12 @@ class _FileExplorerScreenState extends State<FileExplorerScreen> {
     } catch (e) {
       _showErrorSnackBar('Folder upload failed: $e');
     } finally {
-      setState(() {
-        _isTransferring = false;
-        _activeTransferName = null;
-      });
+      if (mounted) {
+        setState(() {
+          _isTransferring = false;
+          _activeTransferName = null;
+        });
+      }
     }
   }
 
@@ -413,9 +425,11 @@ class _FileExplorerScreenState extends State<FileExplorerScreen> {
         localPath,
         remoteDestPath,
         onProgress: (progress) {
-          setState(() {
-            _activeTransferProgress = progress;
-          });
+          if (mounted) {
+            setState(() {
+              _activeTransferProgress = progress;
+            });
+          }
         },
       );
       _showSuccessSnackBar('Uploaded "$name" successfully!');
@@ -424,14 +438,17 @@ class _FileExplorerScreenState extends State<FileExplorerScreen> {
     } catch (e) {
       _showErrorSnackBar('Upload failed: $e');
     } finally {
-      setState(() {
-        _isTransferring = false;
-        _activeTransferName = null;
-      });
+      if (mounted) {
+        setState(() {
+          _isTransferring = false;
+          _activeTransferName = null;
+        });
+      }
     }
   }
 
   void _showUploadSuccessDialog(String message) {
+    if (!mounted) return;
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -456,6 +473,7 @@ class _FileExplorerScreenState extends State<FileExplorerScreen> {
   }
 
   void _showErrorSnackBar(String msg) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(msg),
@@ -466,6 +484,7 @@ class _FileExplorerScreenState extends State<FileExplorerScreen> {
   }
 
   void _showSuccessSnackBar(String msg) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(msg),

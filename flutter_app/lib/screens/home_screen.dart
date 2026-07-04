@@ -40,7 +40,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     final filtered = all.where((t) => t.profileId == profileId).toList();
     svc.setTunnels(filtered);
     
-    setState(() {});
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Future<void> _toggleConnection(TunnelService svc, SettingsService settings) async {

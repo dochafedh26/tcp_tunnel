@@ -240,20 +240,39 @@ Future<void> _handleServiceInstall(List<String> arguments) async {
     exit(0);
   }
 
-  // Install usbipd-win via winget if not installed
+  // Install usbipd-win via local MSI if present, otherwise via winget
   stdout.writeln('Checking/Installing usbipd-win dependency...');
   try {
-    final wingetResult = await Process.run('winget', [
-      'install', 'OUST.Usbipd-Win',
-      '--silent', '--accept-source-agreements', '--accept-package-agreements'
-    ]);
-    if (wingetResult.exitCode == 0) {
-      stdout.writeln('usbipd-win installed successfully.');
+    final currentExeDir = File(Platform.resolvedExecutable).parent.path;
+    var msiFile = File('$currentExeDir/usbipd-win.msi');
+    if (!msiFile.existsSync()) {
+      msiFile = File('usbipd-win.msi');
+    }
+
+    if (msiFile.existsSync()) {
+      stdout.writeln('Found local usbipd-win.msi installer. Installing...');
+      final msiResult = await Process.run('powershell', [
+        '-Command',
+        'Start-Process msiexec.exe -ArgumentList "/i `"${msiFile.absolute.path}`" /qn /norestart" -Verb RunAs -Wait'
+      ]);
+      if (msiResult.exitCode == 0) {
+        stdout.writeln('usbipd-win installed successfully via local MSI.');
+      } else {
+        stdout.writeln('Warning: local MSI install returned exit code ${msiResult.exitCode}.');
+      }
     } else {
-      stdout.writeln('Note: usbipd-win installation returned exit code ${wingetResult.exitCode}. It may already be installed.');
+      final wingetResult = await Process.run('winget', [
+        'install', 'OUST.Usbipd-Win',
+        '--silent', '--accept-source-agreements', '--accept-package-agreements'
+      ]);
+      if (wingetResult.exitCode == 0) {
+        stdout.writeln('usbipd-win installed successfully via winget.');
+      } else {
+        stdout.writeln('Note: winget installation returned exit code ${wingetResult.exitCode}. It may already be installed.');
+      }
     }
   } catch (e) {
-    stdout.writeln('Warning: Failed to install usbipd-win via winget: $e. You may need to install usbipd-win manually.');
+    stdout.writeln('Warning: Failed to install usbipd-win: $e. You may need to install usbipd-win manually.');
   }
 
   // 2. Locate WinSW-x64.exe
@@ -415,13 +434,26 @@ Future<void> _handleSilentInstall() async {
     exit(0);
   }
 
-  // Install usbipd-win via winget if not installed
+  // Install usbipd-win via local MSI if present, otherwise via winget
   stdout.writeln('Checking/Installing usbipd-win dependency...');
   try {
-    await Process.run('winget', [
-      'install', 'OUST.Usbipd-Win',
-      '--silent', '--accept-source-agreements', '--accept-package-agreements'
-    ]);
+    final currentExeDir = File(Platform.resolvedExecutable).parent.path;
+    var msiFile = File('$currentExeDir/usbipd-win.msi');
+    if (!msiFile.existsSync()) {
+      msiFile = File('usbipd-win.msi');
+    }
+
+    if (msiFile.existsSync()) {
+      await Process.run('powershell', [
+        '-Command',
+        'Start-Process msiexec.exe -ArgumentList "/i `"${msiFile.absolute.path}`" /qn /norestart" -Verb RunAs -Wait'
+      ]);
+    } else {
+      await Process.run('winget', [
+        'install', 'OUST.Usbipd-Win',
+        '--silent', '--accept-source-agreements', '--accept-package-agreements'
+      ]);
+    }
   } catch (_) {}
 
   // 2. We are admin. Create folder C:\tcp_tunnel_agent
