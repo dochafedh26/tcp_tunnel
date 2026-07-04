@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 class AgentUpdater {
-  static const String currentVersion = '1.0.56';
+  static const String currentVersion = '1.0.58';
   static const String repoOwner = 'dochafedh26';
   static const String repoName = 'tcp_tunnel';
 
