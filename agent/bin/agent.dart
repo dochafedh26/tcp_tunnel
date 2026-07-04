@@ -441,11 +441,33 @@ Future<void> _handleSilentInstall() async {
         await targetWinSW.copy(targetServiceExe.path);
         stdout.writeln('WinSW-x64.exe downloaded successfully.');
       } else {
-        stderr.writeln('Failed to download WinSW-x64.exe: HTTP ${response.statusCode}');
+        final msg = 'Installation failed: WinSW-x64.exe could not be downloaded (HTTP ${response.statusCode}).\n\n'
+            'SOLUTION: Download the agent as a ZIP file from GitHub releases.\n'
+            'The ZIP already contains both agent.exe AND WinSW-x64.exe.\n'
+            'Extract them to the same folder, then double-click agent.exe to install.';
+        stderr.writeln(msg);
+        if (Platform.isWindows) {
+          await Process.run('powershell', [
+            '-Command',
+            '[System.Windows.Forms.MessageBox]::Show("$msg", "TCP Tunnel Agent — Installation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)',
+          ]);
+        }
         exit(1);
       }
     } catch (e) {
-      stderr.writeln('Error downloading WinSW-x64.exe: $e');
+      final msg = 'Installation failed: Cannot download WinSW-x64.exe.\n\n'
+          'Error: $e\n\n'
+          'SOLUTION: Download the agent as a ZIP file from GitHub releases.\n'
+          'The ZIP already contains both agent.exe AND WinSW-x64.exe.\n'
+          'Extract them to the same folder, then double-click agent.exe to install.';
+      stderr.writeln(msg);
+      if (Platform.isWindows) {
+        await Process.run('powershell', [
+          '-Command',
+          'Add-Type -AssemblyName System.Windows.Forms; '
+          '[System.Windows.Forms.MessageBox]::Show("$msg", "TCP Tunnel Agent — Installation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)',
+        ]);
+      }
       exit(1);
     }
   } else {

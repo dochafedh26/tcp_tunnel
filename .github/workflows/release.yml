@@ -115,14 +115,36 @@ jobs:
           fi
         working-directory: ./agent
 
+      - name: Bundle Windows Agent with WinSW (Windows only)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          TAG_NAME="${{ github.ref_name }}"
+          VERSION="${TAG_NAME#v}"
+          # Download WinSW
+          curl -L -o WinSW-x64.exe https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe
+          # Create a zip bundle containing agent.exe + WinSW-x64.exe + README
+          mkdir agent_bundle
+          cp "agent_windows_$VERSION.exe" agent_bundle/agent_windows_$VERSION.exe
+          cp WinSW-x64.exe agent_bundle/WinSW-x64.exe
+          cat > agent_bundle/INSTALL.txt << 'EOF'
+          TCP Tunnel Agent - Windows Installer
+          =====================================
+          1. Keep both files (agent_windows_x.x.x.exe AND WinSW-x64.exe) in the SAME folder.
+          2. Double-click agent_windows_x.x.x.exe to install automatically.
+          3. The agent will install itself as a Windows Service and start automatically.
+          EOF
+          cd agent_bundle
+          powershell -Command "Compress-Archive -Path * -DestinationPath '../tcp_tunnel_agent_windows_${VERSION}.zip'"
+        working-directory: ./agent
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os == 'windows-latest' && 'agent-windows-binary' || 'agent-linux-binary' }}
           path: |
-            ./agent/agent_windows_*.exe
+            ./agent/tcp_tunnel_agent_windows_*.zip
             ./agent/agent_linux_*
-            ./agent/agent-windows.exe
             ./agent/agent-linux
 
   # ── BUILD THE FLUTTER APP ──────────────────────────────────────────────────
@@ -259,7 +281,7 @@ jobs:
         shell: bash
         run: |
           # Use find to locate all compiled executables, zips, apks, and tars recursively in downloaded dirs
-          FILES=$(find . -maxdepth 3 -type f \( -name "agent_*" -o -name "agent-*" -o -name "tcp_tunnel_client_*" \))
+          FILES=$(find . -maxdepth 3 -type f \( -name "tcp_tunnel_agent_windows_*.zip" -o -name "agent_linux_*" -o -name "agent-linux" -o -name "tcp_tunnel_client_*" \))
           echo "Found release files:"
           echo "$FILES"
           
