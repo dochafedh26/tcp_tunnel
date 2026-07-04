@@ -102,6 +102,49 @@ class Protocol {
         'error': error,
       });
 
+  static String deviceListResponseV2(
+    String requestId,
+    bool success,
+    List<Map<String, dynamic>> usbDevices,
+    List<Map<String, dynamic>> printers,
+    List<Map<String, dynamic>> comPorts, {
+    String? error,
+  }) =>
+      jsonEncode({
+        'type': 'device_list_response',
+        'requestId': requestId,
+        'success': success,
+        'usbDevices': usbDevices,
+        'printers': printers,
+        'comPorts': comPorts,
+        'error': error,
+      });
+
+  static String usbEjectResponse(String requestId, bool success, {String? error}) =>
+      jsonEncode({
+        'type': 'usb_eject_response',
+        'requestId': requestId,
+        'success': success,
+        'error': error,
+      });
+
+  static String usbShareResponse(String requestId, bool success, String shareName, {String? error}) =>
+      jsonEncode({
+        'type': 'usb_share_response',
+        'requestId': requestId,
+        'success': success,
+        'shareName': shareName,
+        'error': error,
+      });
+
+  static String usbUnshareResponse(String requestId, bool success, {String? error}) =>
+      jsonEncode({
+        'type': 'usb_unshare_response',
+        'requestId': requestId,
+        'success': success,
+        'error': error,
+      });
+
   // ── Binary frame codec ────────────────────────────────────────────────────
 
   /// Encode a [data] payload into a binary data frame for [channelId].

@@ -216,6 +216,22 @@ class AgentService {
         final requestId = msg['requestId'] as String;
         _handleDeviceListRequest(requestId);
 
+      case 'usb_eject_request':
+        final requestId = msg['requestId'] as String;
+        final driveLetter = msg['driveLetter'] as String;
+        _handleUsbEjectRequest(requestId, driveLetter);
+
+      case 'usb_share_request':
+        final requestId = msg['requestId'] as String;
+        final drivePath = msg['drivePath'] as String;
+        final shareName = msg['shareName'] as String;
+        _handleUsbShareRequest(requestId, drivePath, shareName);
+
+      case 'usb_unshare_request':
+        final requestId = msg['requestId'] as String;
+        final shareName = msg['shareName'] as String;
+        _handleUsbUnshareRequest(requestId, shareName);
+
       case 'print_job_request':
         final requestId = msg['requestId'] as String;
         final filePath = msg['filePath'] as String;
@@ -238,9 +254,40 @@ class AgentService {
     try {
       final usbDevices = await DeviceManager.getUsbDevices();
       final printers = await DeviceManager.getPrinters();
-      _channel?.sink.add(Protocol.deviceListResponse(requestId, true, usbDevices, printers));
+      final comPorts = await DeviceManager.getSerialPorts();
+      _channel?.sink.add(Protocol.deviceListResponseV2(requestId, true, usbDevices, printers, comPorts));
     } catch (e) {
-      _channel?.sink.add(Protocol.deviceListResponse(requestId, false, [], [], error: e.toString()));
+      _channel?.sink.add(Protocol.deviceListResponseV2(requestId, false, [], [], [], error: e.toString()));
+    }
+  }
+
+  Future<void> _handleUsbEjectRequest(String requestId, String driveLetter) async {
+    try {
+      final success = await DeviceManager.ejectUsbDrive(driveLetter);
+      _channel?.sink.add(Protocol.usbEjectResponse(requestId, success,
+          error: success ? null : 'Failed to eject drive'));
+    } catch (e) {
+      _channel?.sink.add(Protocol.usbEjectResponse(requestId, false, error: e.toString()));
+    }
+  }
+
+  Future<void> _handleUsbShareRequest(String requestId, String drivePath, String shareName) async {
+    try {
+      final success = await DeviceManager.shareUsbDrive(drivePath, shareName);
+      _channel?.sink.add(Protocol.usbShareResponse(requestId, success, shareName,
+          error: success ? null : 'Failed to create network share. Ensure the agent runs as Administrator.'));
+    } catch (e) {
+      _channel?.sink.add(Protocol.usbShareResponse(requestId, false, shareName, error: e.toString()));
+    }
+  }
+
+  Future<void> _handleUsbUnshareRequest(String requestId, String shareName) async {
+    try {
+      final success = await DeviceManager.removeUsbShare(shareName);
+      _channel?.sink.add(Protocol.usbUnshareResponse(requestId, success,
+          error: success ? null : 'Failed to remove share'));
+    } catch (e) {
+      _channel?.sink.add(Protocol.usbUnshareResponse(requestId, false, error: e.toString()));
     }
   }
 

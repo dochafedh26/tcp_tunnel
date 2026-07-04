@@ -40,7 +40,7 @@ class DeviceManager {
         // Also query USB Removable Storage Drives to see if we can expose their mount points
         final storageResult = await Process.run('powershell', [
           '-Command',
-          'Get-CimInstance Win32_LogicalDisk | Where-Object { \$_.DriveType -eq 2 } | Select-Object DeviceID, VolumeName | ConvertTo-Json'
+          'Get-CimInstance Win32_LogicalDisk | Where-Object { \$_.DriveType -eq 2 } | Select-Object DeviceID, VolumeName, Size, FreeSpace, FileSystem | ConvertTo-Json'
         ]);
         if (storageResult.exitCode == 0 && storageResult.stdout.toString().trim().isNotEmpty) {
           final decodedStorage = jsonDecode(storageResult.stdout.toString());
@@ -54,6 +54,9 @@ class DeviceManager {
                 'status': 'OK',
                 'class': 'Storage',
                 'driveLetter': driveLetter,
+                'size': item['Size'] ?? 0,
+                'freeSpace': item['FreeSpace'] ?? 0,
+                'fileSystem': item['FileSystem'] ?? '',
               });
             }
           }
@@ -303,4 +306,114 @@ public class RawPrinter {
     } catch (_) {}
     return false;
   }
+
+  /// Query all serial/COM ports on the Agent machine.
+  static Future<List<Map<String, dynamic>>> getSerialPorts() async {
+    final list = <Map<String, dynamic>>[];
+    try {
+      if (Platform.isWindows) {
+        final result = await Process.run('powershell', [
+          '-Command',
+          'Get-CimInstance Win32_SerialPort | Select-Object Name, DeviceID, Description, Status | ConvertTo-Json'
+        ]);
+        if (result.exitCode == 0 && result.stdout.toString().trim().isNotEmpty) {
+          try {
+            final decoded = jsonDecode(result.stdout.toString());
+            void addItem(Map<dynamic, dynamic> item) {
+              list.add({
+                'name': item['Name'] ?? item['Description'] ?? 'Unknown COM Port',
+                'id': item['DeviceID'] ?? '',
+                'description': item['Description'] ?? '',
+                'status': item['Status'] ?? 'Unknown',
+              });
+            }
+            if (decoded is List) {
+              for (final item in decoded) {
+                if (item is Map) addItem(item);
+              }
+            } else if (decoded is Map) {
+              addItem(decoded);
+            }
+          } catch (_) {}
+        }
+      } else if (Platform.isLinux) {
+        final lsResult = await Process.run('bash', ['-c', 'ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null']);
+        if (lsResult.exitCode == 0) {
+          final ports = LineSplitter.split(lsResult.stdout.toString()).where((l) => l.trim().isNotEmpty);
+          for (final port in ports) {
+            list.add({
+              'name': port.split('/').last,
+              'id': port,
+              'description': 'USB Serial Device',
+              'status': 'OK',
+            });
+          }
+        }
+      }
+    } catch (_) {}
+    return list;
+  }
+
+  /// Safely eject a USB drive by its drive letter (Windows) or mount path (Linux).
+  static Future<bool> ejectUsbDrive(String driveLetterOrPath) async {
+    try {
+      if (Platform.isWindows) {
+        final psCommand = '''
+\$driveToEject = "${driveLetterOrPath.replaceAll('\\', '').replaceAll(':', '')}"
+\$disk = Get-CimInstance -Query "SELECT * FROM Win32_Volume WHERE DriveLetter='\$driveToEject:'" -ErrorAction SilentlyContinue
+if (\$disk) {
+  \$disk | Invoke-CimMethod -MethodName "DismountVolume" | Out-Null
+  Write-Output "OK"
+} else {
+  \$shell = New-Object -ComObject Shell.Application
+  \$ns = \$shell.Namespace(17)
+  foreach (\$item in \$ns.Items()) {
+    if (\$item.Path -like "\$driveToEject*") {
+      \$item.InvokeVerbEx("Eject")
+      Write-Output "OK"
+      return
+    }
+  }
+  Write-Output "FAIL"
 }
+''';
+        final result = await Process.run('powershell', ['-Command', psCommand]);
+        return result.exitCode == 0 && result.stdout.toString().trim() == 'OK';
+      } else if (Platform.isLinux) {
+        final result = await Process.run('umount', [driveLetterOrPath]);
+        return result.exitCode == 0;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// Share a USB drive/path as a Windows network share accessible over SMB.
+  static Future<bool> shareUsbDrive(String drivePath, String shareName) async {
+    try {
+      if (Platform.isWindows) {
+        await Process.run('powershell', ['-Command', 'Remove-SmbShare -Name "$shareName" -Force -ErrorAction SilentlyContinue']);
+        final result = await Process.run('powershell', [
+          '-Command',
+          'New-SmbShare -Name "$shareName" -Path "$drivePath" -FullAccess "Everyone" -ErrorAction Stop; Write-Output "OK"'
+        ]);
+        return result.exitCode == 0 && result.stdout.toString().contains('OK');
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// Remove a Windows network share.
+  static Future<bool> removeUsbShare(String shareName) async {
+    try {
+      if (Platform.isWindows) {
+        final result = await Process.run('powershell', [
+          '-Command',
+          'Remove-SmbShare -Name "$shareName" -Force -ErrorAction Stop; Write-Output "OK"'
+        ]);
+        return result.exitCode == 0 && result.stdout.toString().contains('OK');
+      }
+    } catch (_) {}
+    return false;
+  }
+}
+

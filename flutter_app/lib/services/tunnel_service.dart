@@ -55,6 +55,11 @@ class TunnelService extends ChangeNotifier {
   // ── Terminal Shell State ────────────────────────────────────────────────────
   final Map<String, Completer<Map<String, dynamic>>> _terminalCommandCompleters = {};
 
+  // ── USB Control State ───────────────────────────────────────────────────────
+  final Map<String, Completer<bool>> _usbEjectCompleters = {};
+  final Map<String, Completer<bool>> _usbShareCompleters = {};
+  final Map<String, Completer<bool>> _usbUnshareCompleters = {};
+
   // ── Stats ──────────────────────────────────────────────────────────────────
   int _bytesIn = 0;
   int _bytesOut = 0;
@@ -444,12 +449,14 @@ class TunnelService extends ChangeNotifier {
         final error = msg['error'] as String?;
         final usbDevices = List<Map<String, dynamic>>.from(msg['usbDevices'] as List? ?? []);
         final printers = List<Map<String, dynamic>>.from(msg['printers'] as List? ?? []);
+        final comPorts = List<Map<String, dynamic>>.from(msg['comPorts'] as List? ?? []);
         final completer = _deviceListCompleters.remove(requestId);
         if (completer != null) {
           if (success) {
             completer.complete({
               'usbDevices': usbDevices,
               'printers': printers,
+              'comPorts': comPorts,
             });
           } else {
             completer.completeError(Exception(error ?? 'Failed to list devices'));
@@ -486,6 +493,45 @@ class TunnelService extends ChangeNotifier {
             });
           } else {
             completer.completeError(Exception(error ?? 'Failed to execute terminal command'));
+          }
+        }
+
+      case 'usb_eject_response':
+        final requestId = msg['requestId'] as String;
+        final success = msg['success'] as bool;
+        final error = msg['error'] as String?;
+        final completer = _usbEjectCompleters.remove(requestId);
+        if (completer != null) {
+          if (success) {
+            completer.complete(true);
+          } else {
+            completer.completeError(Exception(error ?? 'Eject failed'));
+          }
+        }
+
+      case 'usb_share_response':
+        final requestId = msg['requestId'] as String;
+        final success = msg['success'] as bool;
+        final error = msg['error'] as String?;
+        final completer = _usbShareCompleters.remove(requestId);
+        if (completer != null) {
+          if (success) {
+            completer.complete(true);
+          } else {
+            completer.completeError(Exception(error ?? 'Share failed'));
+          }
+        }
+
+      case 'usb_unshare_response':
+        final requestId = msg['requestId'] as String;
+        final success = msg['success'] as bool;
+        final error = msg['error'] as String?;
+        final completer = _usbUnshareCompleters.remove(requestId);
+        if (completer != null) {
+          if (success) {
+            completer.complete(true);
+          } else {
+            completer.completeError(Exception(error ?? 'Unshare failed'));
           }
         }
     }
@@ -866,6 +912,46 @@ class TunnelService extends ChangeNotifier {
       'cwd': cwd,
     }));
 
+    return completer.future;
+  }
+
+  Future<bool> ejectRemoteUsbDrive(String driveLetter) async {
+    if (!isConnected) throw Exception('Not connected to relay');
+    final requestId = _uuid.v4();
+    final completer = Completer<bool>();
+    _usbEjectCompleters[requestId] = completer;
+    _send(jsonEncode({
+      'type': 'usb_eject_request',
+      'requestId': requestId,
+      'driveLetter': driveLetter,
+    }));
+    return completer.future;
+  }
+
+  Future<bool> shareRemoteUsbDrive(String drivePath, String shareName) async {
+    if (!isConnected) throw Exception('Not connected to relay');
+    final requestId = _uuid.v4();
+    final completer = Completer<bool>();
+    _usbShareCompleters[requestId] = completer;
+    _send(jsonEncode({
+      'type': 'usb_share_request',
+      'requestId': requestId,
+      'drivePath': drivePath,
+      'shareName': shareName,
+    }));
+    return completer.future;
+  }
+
+  Future<bool> unshareRemoteUsbDrive(String shareName) async {
+    if (!isConnected) throw Exception('Not connected to relay');
+    final requestId = _uuid.v4();
+    final completer = Completer<bool>();
+    _usbUnshareCompleters[requestId] = completer;
+    _send(jsonEncode({
+      'type': 'usb_unshare_request',
+      'requestId': requestId,
+      'shareName': shareName,
+    }));
     return completer.future;
   }
 

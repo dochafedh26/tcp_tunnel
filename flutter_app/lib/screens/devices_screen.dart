@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import '../services/tunnel_service.dart';
@@ -20,11 +21,13 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
   String? _error;
   List<Map<String, dynamic>> _usbDevices = [];
   List<Map<String, dynamic>> _printers = [];
+  List<Map<String, dynamic>> _comPorts = [];
+  final Set<String> _sharedDrives = {};
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _refreshDevices();
     });
@@ -48,8 +51,9 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
     try {
       final data = await service.fetchRemoteDevices();
       setState(() {
-        _usbDevices = data['usbDevices'] ?? [];
-        _printers = data['printers'] ?? [];
+        _usbDevices = List<Map<String, dynamic>>.from(data['usbDevices'] ?? []);
+        _printers = List<Map<String, dynamic>>.from(data['printers'] ?? []);
+        _comPorts = List<Map<String, dynamic>>.from(data['comPorts'] ?? []);
         _loading = false;
       });
     } catch (e) {
@@ -64,7 +68,6 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
   Widget build(BuildContext context) {
     final service = context.watch<TunnelService>();
 
-    // ── Disconnected / Offline state ──────────────────────────────────────────
     if (!service.isConnected || !service.peerConnected) {
       return Scaffold(
         backgroundColor: const Color(0xFF0A0E1A),
@@ -82,10 +85,8 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
               children: [
                 Icon(Icons.cloud_off_outlined, color: Colors.orangeAccent, size: 48),
                 SizedBox(height: 16),
-                Text(
-                  'Work Agent Offline',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
-                ),
+                Text('Work Agent Offline',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
                 SizedBox(height: 8),
                 Text(
                   'To manage remote USB & printers, connect to the relay server and ensure the work agent is online.',
@@ -116,8 +117,8 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Icon(Icons.usb_rounded, size: 18),
-                    SizedBox(width: 8),
-                    Text('USB Devices'),
+                    SizedBox(width: 6),
+                    Text('USB'),
                   ],
                 ),
               ),
@@ -126,8 +127,18 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Icon(Icons.print_rounded, size: 18),
-                    SizedBox(width: 8),
+                    SizedBox(width: 6),
                     Text('Printers'),
+                  ],
+                ),
+              ),
+              Tab(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.cable_rounded, size: 18),
+                    SizedBox(width: 6),
+                    Text('COM Ports'),
                   ],
                 ),
               ),
@@ -135,47 +146,57 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
           ),
         ),
       ),
-      body: RefreshIndicator(
-        onRefresh: _refreshDevices,
-        color: const Color(0xFF00BFA5),
-        backgroundColor: const Color(0xFF0F1629),
-        child: _loading
-            ? const Center(child: CircularProgressIndicator(color: Color(0xFF00BFA5)))
-            : _error != null
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24.0),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 48),
-                          const SizedBox(height: 16),
-                          Text(_error!, style: const TextStyle(color: Colors.white70), textAlign: TextAlign.center),
-                          const SizedBox(height: 16),
-                          ElevatedButton(
-                            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00BFA5)),
-                            onPressed: _refreshDevices,
-                            child: const Text('Retry'),
-                          )
-                        ],
-                      ),
-                    ),
-                  )
-                : TabBarView(
-                    controller: _tabController,
-                    children: [
-                      _buildUsbTab(service),
-                      _buildPrintersTab(service),
-                    ],
-                  ),
+      floatingActionButton: FloatingActionButton.small(
+        backgroundColor: const Color(0xFF00BFA5),
+        onPressed: _refreshDevices,
+        tooltip: 'Refresh devices',
+        child: const Icon(Icons.refresh_rounded, color: Colors.white),
       ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(color: Color(0xFF00BFA5)))
+          : _error != null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 48),
+                        const SizedBox(height: 16),
+                        Text(_error!, style: const TextStyle(color: Colors.white70), textAlign: TextAlign.center),
+                        const SizedBox(height: 16),
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00BFA5)),
+                          onPressed: _refreshDevices,
+                          child: const Text('Retry'),
+                        )
+                      ],
+                    ),
+                  ),
+                )
+              : TabBarView(
+                  controller: _tabController,
+                  children: [
+                    _buildUsbTab(service),
+                    _buildPrintersTab(service),
+                    _buildComPortsTab(),
+                  ],
+                ),
     );
   }
 
   Widget _buildUsbTab(TunnelService service) {
     if (_usbDevices.isEmpty) {
       return const Center(
-        child: Text('No connected USB devices found.', style: TextStyle(color: Color(0xFF8892A4))),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.usb_off_rounded, color: Color(0xFF8892A4), size: 48),
+            SizedBox(height: 12),
+            Text('No USB devices connected on the remote machine.',
+                style: TextStyle(color: Color(0xFF8892A4))),
+          ],
+        ),
       );
     }
 
@@ -185,80 +206,140 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
       itemBuilder: (context, index) {
         final device = _usbDevices[index];
         final isStorage = device['class'] == 'Storage';
+        final driveLetter = device['driveLetter'] as String?;
+        final isShared = driveLetter != null && _sharedDrives.contains(driveLetter);
 
         return Card(
           color: const Color(0xFF0F1629),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
-            side: const BorderSide(color: Color(0xFF1A2340)),
+            side: BorderSide(
+              color: isShared ? const Color(0xFF00BFA5).withValues(alpha: 0.5) : const Color(0xFF1A2340),
+            ),
           ),
           margin: const EdgeInsets.only(bottom: 12),
           child: Padding(
             padding: const EdgeInsets.all(16.0),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                CircleAvatar(
-                  backgroundColor: isStorage ? Colors.blue.withValues(alpha: 0.15) : const Color(0xFF00BFA5).withValues(alpha: 0.15),
-                  child: Icon(
-                    isStorage ? Icons.folder_open_rounded : Icons.usb_rounded,
-                    color: isStorage ? Colors.blue : const Color(0xFF00BFA5),
-                  ),
+                Row(
+                  children: [
+                    CircleAvatar(
+                      backgroundColor: isStorage
+                          ? Colors.blue.withValues(alpha: 0.15)
+                          : const Color(0xFF00BFA5).withValues(alpha: 0.15),
+                      child: Icon(
+                        isStorage ? Icons.folder_open_rounded : Icons.usb_rounded,
+                        color: isStorage ? Colors.blue : const Color(0xFF00BFA5),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  device['name'] ?? 'Unknown USB Device',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              if (isShared)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF00BFA5).withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.share_rounded, size: 10, color: Color(0xFF00BFA5)),
+                                      SizedBox(width: 3),
+                                      Text('Shared', style: TextStyle(color: Color(0xFF00BFA5), fontSize: 10, fontWeight: FontWeight.bold)),
+                                    ],
+                                  ),
+                                ),
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+                          if (isStorage && (device['size'] as int? ?? 0) > 0)
+                            Text(
+                              _formatStorageSubtitle(device),
+                              style: const TextStyle(color: Color(0xFF8892A4), fontSize: 12),
+                            )
+                          else
+                            Text(
+                              'ID: ${device['id'] ?? 'N/A'}',
+                              style: const TextStyle(color: Color(0xFF8892A4), fontSize: 12),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        device['name'] ?? 'Unknown USB Device',
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                if (isStorage && (device['size'] as int? ?? 0) > 0) ...[
+                  const SizedBox(height: 10),
+                  _buildCapacityBar(device),
+                ],
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    if (isStorage && driveLetter != null) ...[
+                      _actionButton(
+                        icon: Icons.arrow_forward_rounded,
+                        label: 'Browse',
+                        color: const Color(0xFF00BFA5),
+                        onPressed: () {
+                          service.requestedBrowsePath = driveLetter;
+                          widget.onTabChange?.call(1);
+                        },
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'ID: ${device['id'] ?? 'N/A'}',
-                        style: const TextStyle(color: Color(0xFF8892A4), fontSize: 12),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      const SizedBox(width: 8),
+                      _actionButton(
+                        icon: isShared ? Icons.link_off_rounded : Icons.share_rounded,
+                        label: isShared ? 'Unshare' : 'Share',
+                        color: isShared ? Colors.orange : const Color(0xFF3B82F6),
+                        onPressed: () => isShared
+                            ? _unshareDrive(service, 'usb_share')
+                            : _shareDrive(service, device),
                       ),
-                    ],
-                  ),
+                      const SizedBox(width: 8),
+                      _actionButton(
+                        icon: Icons.eject_rounded,
+                        label: 'Eject',
+                        color: Colors.redAccent,
+                        onPressed: () => _ejectDrive(service, device),
+                      ),
+                    ] else
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: device['status'] == 'OK'
+                              ? Colors.green.withValues(alpha: 0.15)
+                              : Colors.grey.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          device['status'] ?? 'Unknown',
+                          style: TextStyle(
+                            color: device['status'] == 'OK' ? Colors.green : Colors.grey,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
-                const SizedBox(width: 8),
-                if (isStorage && device['driveLetter'] != null)
-                  ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF00BFA5),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    ),
-                    icon: const Icon(Icons.arrow_forward_rounded, size: 16),
-                    label: const Text('Browse', style: TextStyle(fontSize: 13)),
-                    onPressed: () {
-                      service.requestedBrowsePath = device['driveLetter'];
-                      if (widget.onTabChange != null) {
-                        widget.onTabChange!(1); // index 1 is File Explorer tab
-                      }
-                    },
-                  )
-                else
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: device['status'] == 'OK' ? Colors.green.withValues(alpha: 0.15) : Colors.grey.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      device['status'] ?? 'Unknown',
-                      style: TextStyle(
-                        color: device['status'] == 'OK' ? Colors.green : Colors.grey,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
               ],
             ),
           ),
@@ -267,10 +348,248 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
     );
   }
 
+  Widget _buildCapacityBar(Map<String, dynamic> device) {
+    final total = (device['size'] as int? ?? 0).toDouble();
+    final free = (device['freeSpace'] as int? ?? 0).toDouble();
+    final used = total - free;
+    final fraction = total > 0 ? (used / total).clamp(0.0, 1.0) : 0.0;
+
+    Color barColor;
+    if (fraction < 0.7) {
+      barColor = const Color(0xFF00BFA5);
+    } else if (fraction < 0.9) {
+      barColor = Colors.orange;
+    } else {
+      barColor = Colors.redAccent;
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: fraction,
+            backgroundColor: const Color(0xFF1A2340),
+            valueColor: AlwaysStoppedAnimation<Color>(barColor),
+            minHeight: 6,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              '${_formatBytes(used.toInt())} used',
+              style: const TextStyle(color: Color(0xFF8892A4), fontSize: 11),
+            ),
+            Text(
+              '${_formatBytes(free.toInt())} free',
+              style: TextStyle(color: barColor, fontSize: 11, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  String _formatStorageSubtitle(Map<String, dynamic> device) {
+    final total = device['size'] as int? ?? 0;
+    final fileSystem = device['fileSystem'] as String? ?? '';
+    if (total == 0) return device['id'] ?? '';
+    return '${_formatBytes(total)} total${fileSystem.isNotEmpty ? ' · $fileSystem' : ''}';
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes <= 0) return '0 B';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
+  }
+
+  Widget _actionButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onPressed,
+  }) {
+    return ElevatedButton.icon(
+      style: ElevatedButton.styleFrom(
+        backgroundColor: color.withValues(alpha: 0.12),
+        foregroundColor: color,
+        elevation: 0,
+        side: BorderSide(color: color.withValues(alpha: 0.3), width: 0.8),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+      icon: Icon(icon, size: 14),
+      label: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+      onPressed: onPressed,
+    );
+  }
+
+  Future<void> _ejectDrive(TunnelService service, Map<String, dynamic> device) async {
+    final driveLetter = device['driveLetter'] as String?;
+    if (driveLetter == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0F1629),
+        title: const Text('Eject USB Drive'),
+        content: Text(
+          'Safely eject "${device['name']}" ($driveLetter) from the remote machine?',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Eject', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await service.ejectRemoteUsbDrive(driveLetter);
+      setState(() => _usbDevices.removeWhere((d) => d['driveLetter'] == driveLetter));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$driveLetter ejected successfully'),
+            backgroundColor: const Color(0xFF00BFA5),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Eject failed: ${e.toString().replaceAll('Exception: ', '')}'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _shareDrive(TunnelService service, Map<String, dynamic> device) async {
+    final driveLetter = device['driveLetter'] as String?;
+    if (driveLetter == null) return;
+
+    final drivePath = '$driveLetter\\';
+    const shareName = 'usb_share';
+
+    try {
+      await service.shareRemoteUsbDrive(drivePath, shareName);
+      setState(() => _sharedDrives.add(driveLetter));
+
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF0F1629),
+          title: const Row(
+            children: [
+              Icon(Icons.share_rounded, color: Color(0xFF00BFA5), size: 20),
+              SizedBox(width: 8),
+              Text('Drive Shared!', style: TextStyle(color: Colors.white)),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'The USB drive is now shared through the tunnel.\n\nTo access it on your local machine:',
+                style: TextStyle(color: Colors.white70, height: 1.4),
+              ),
+              const SizedBox(height: 16),
+              const Text('1. Add a tunnel for port 445 → localhost:445 in the Tunnels tab',
+                  style: TextStyle(color: Color(0xFF8892A4), fontSize: 12)),
+              const SizedBox(height: 6),
+              const Text('2. Map a network drive in Windows Explorer:',
+                  style: TextStyle(color: Color(0xFF8892A4), fontSize: 12)),
+              const SizedBox(height: 4),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF070A13),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const SelectableText(
+                  r'\\127.0.0.1\usb_share',
+                  style: TextStyle(fontFamily: 'Courier', color: Color(0xFF00BFA5), fontSize: 13),
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextButton.icon(
+                icon: const Icon(Icons.copy_rounded, size: 14),
+                label: const Text('Copy path'),
+                onPressed: () => Clipboard.setData(
+                  const ClipboardData(text: r'\\127.0.0.1\usb_share'),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Share failed: ${e.toString().replaceAll('Exception: ', '')}'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _unshareDrive(TunnelService service, String shareName) async {
+    try {
+      await service.unshareRemoteUsbDrive(shareName);
+      setState(() => _sharedDrives.clear());
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Network share removed'),
+            backgroundColor: Color(0xFF00BFA5),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to remove share: ${e.toString().replaceAll('Exception: ', '')}'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
+  }
+
   Widget _buildPrintersTab(TunnelService service) {
     if (_printers.isEmpty) {
       return const Center(
-        child: Text('No printers found on the remote machine.', style: TextStyle(color: Color(0xFF8892A4))),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.print_disabled_rounded, color: Color(0xFF8892A4), size: 48),
+            SizedBox(height: 12),
+            Text('No printers found on the remote machine.',
+                style: TextStyle(color: Color(0xFF8892A4))),
+          ],
+        ),
       );
     }
 
@@ -279,7 +598,7 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
       itemCount: _printers.length,
       itemBuilder: (context, index) {
         final printer = _printers[index];
-        final isDefault = printer['isDefault'] ?? false;
+        final isDefault = printer['isDefault'] as bool? ?? false;
 
         return Card(
           color: const Color(0xFF0F1629),
@@ -290,77 +609,76 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
           margin: const EdgeInsets.only(bottom: 12),
           child: Padding(
             padding: const EdgeInsets.all(16.0),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                CircleAvatar(
-                  backgroundColor: const Color(0xFF00BFA5).withValues(alpha: 0.15),
-                  child: const Icon(Icons.print_rounded, color: Color(0xFF00BFA5)),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
+                Row(
+                  children: [
+                    CircleAvatar(
+                      backgroundColor: const Color(0xFF00BFA5).withValues(alpha: 0.15),
+                      child: const Icon(Icons.print_rounded, color: Color(0xFF00BFA5)),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(
-                            child: Text(
-                              printer['name'] ?? 'Unknown Printer',
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  printer['name'] ?? 'Unknown Printer',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              if (isDefault) ...[
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF00BFA5).withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(
+                                        color: const Color(0xFF00BFA5).withValues(alpha: 0.3), width: 0.5),
+                                  ),
+                                  child: const Text('Default',
+                                      style: TextStyle(
+                                          color: Color(0xFF00BFA5), fontSize: 9, fontWeight: FontWeight.bold)),
+                                ),
+                              ],
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Status: ${printer['status'] ?? 'Offline'}',
+                            style: TextStyle(
+                              color: printer['status'] == 'Idle' ? Colors.green : Colors.redAccent,
+                              fontSize: 12,
                             ),
                           ),
-                          if (isDefault) ...[
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF00BFA5).withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(4),
-                                border: Border.all(color: const Color(0xFF00BFA5).withValues(alpha: 0.3), width: 0.5),
-                              ),
-                              child: const Text('Default', style: TextStyle(color: Color(0xFF00BFA5), fontSize: 9, fontWeight: FontWeight.bold)),
-                            ),
-                          ],
                         ],
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Status: ${printer['status'] ?? 'Offline'}',
-                        style: TextStyle(
-                          color: printer['status'] == 'Idle' ? Colors.green : Colors.redAccent,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(height: 12),
                 Row(
-                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1E293B),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: const BorderSide(color: Color(0xFF334155), width: 0.5)),
-                      ),
-                      icon: const Icon(Icons.folder_outlined, size: 14),
-                      label: const Text('Print Remote', style: TextStyle(fontSize: 12)),
+                    _actionButton(
+                      icon: Icons.folder_outlined,
+                      label: 'Print Remote File',
+                      color: const Color(0xFF8892A4),
                       onPressed: () => _selectAndPrintFile(service, printer['name']),
                     ),
                     const SizedBox(width: 8),
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF00BFA5),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      ),
-                      icon: const Icon(Icons.upload_file_rounded, size: 14),
-                      label: const Text('Print Local', style: TextStyle(fontSize: 12)),
+                    _actionButton(
+                      icon: Icons.upload_file_rounded,
+                      label: 'Print Local File',
+                      color: const Color(0xFF00BFA5),
                       onPressed: () => _selectAndPrintLocalFile(service, printer['name']),
                     ),
                   ],
@@ -373,20 +691,106 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
     );
   }
 
+  Widget _buildComPortsTab() {
+    if (_comPorts.isEmpty) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.cable_rounded, color: Color(0xFF8892A4), size: 48),
+            SizedBox(height: 12),
+            Text('No serial/COM port devices found.',
+                style: TextStyle(color: Color(0xFF8892A4))),
+            SizedBox(height: 6),
+            Text(
+              'Devices like Arduino, GPS, modems appear here when connected.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Color(0xFF4A5568), fontSize: 12),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: _comPorts.length,
+      itemBuilder: (context, index) {
+        final port = _comPorts[index];
+        return Card(
+          color: const Color(0xFF0F1629),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: const BorderSide(color: Color(0xFF1A2340)),
+          ),
+          margin: const EdgeInsets.only(bottom: 12),
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  backgroundColor: Colors.purple.withValues(alpha: 0.15),
+                  child: const Icon(Icons.cable_rounded, color: Colors.purple),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        port['name'] ?? 'Unknown COM Port',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if ((port['description'] as String? ?? '').isNotEmpty &&
+                          port['description'] != port['name']) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          port['description'] as String,
+                          style: const TextStyle(color: Color(0xFF8892A4), fontSize: 12),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: port['status'] == 'OK' || port['status'] == 'Unknown'
+                        ? Colors.green.withValues(alpha: 0.15)
+                        : Colors.grey.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    port['status'] ?? 'Unknown',
+                    style: TextStyle(
+                      color: port['status'] == 'OK' ? Colors.green : Colors.grey,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   void _selectAndPrintLocalFile(TunnelService service, String printerName) async {
     try {
       final result = await FilePicker.platform.pickFiles();
-      if (result == null || result.files.single.path == null) {
-        return;
-      }
-
+      if (result == null || result.files.single.path == null) return;
       final localPath = result.files.single.path!;
       final filename = result.files.single.name;
       final tempDestPath = 'temp_print_${DateTime.now().millisecondsSinceEpoch}_$filename';
-
-      if (mounted) {
-        _showLocalPrintingProgress(service, localPath, tempDestPath, printerName);
-      }
+      if (mounted) _showLocalPrintingProgress(service, localPath, tempDestPath, printerName);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -396,7 +800,8 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
     }
   }
 
-  void _showLocalPrintingProgress(TunnelService service, String localPath, String tempDestPath, String printerName) {
+  void _showLocalPrintingProgress(
+      TunnelService service, String localPath, String tempDestPath, String printerName) {
     double uploadProgress = 0.0;
     String statusText = 'Uploading local file...';
     bool isUploading = true;
@@ -411,26 +816,18 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
           builder: (context, setDialogState) {
             Future<void> runProcess() async {
               try {
-                // Stage 1: Upload
-                await service.uploadLocalFile(
-                  localPath,
-                  tempDestPath,
-                  onProgress: (progress) {
-                    setDialogState(() {
-                      uploadProgress = progress;
-                      statusText = 'Uploading: ${(progress * 100).toStringAsFixed(0)}%';
-                    });
-                  },
-                );
-
-                // Stage 2: Print
+                await service.uploadLocalFile(localPath, tempDestPath,
+                    onProgress: (progress) {
+                  setDialogState(() {
+                    uploadProgress = progress;
+                    statusText = 'Uploading: ${(progress * 100).toStringAsFixed(0)}%';
+                  });
+                });
                 setDialogState(() {
                   isUploading = false;
                   statusText = 'Spooling print job on remote agent...';
                 });
-
                 await service.triggerRemotePrint(tempDestPath, printerName, deleteAfter: true);
-
                 setDialogState(() {
                   isFinished = true;
                   statusText = 'Print job completed successfully!';
@@ -444,9 +841,7 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
             }
 
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (statusText == 'Uploading local file...') {
-                runProcess();
-              }
+              if (statusText == 'Uploading local file...') runProcess();
             });
 
             if (errorMessage != null) {
@@ -454,12 +849,7 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
                 backgroundColor: const Color(0xFF0F1629),
                 title: const Text('Print Job Failed'),
                 content: Text(errorMessage!, style: const TextStyle(color: Colors.white70)),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Close'),
-                  ),
-                ],
+                actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))],
               );
             }
 
@@ -468,13 +858,9 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
               return AlertDialog(
                 backgroundColor: const Color(0xFF0F1629),
                 title: const Text('Success'),
-                content: Text('"$fileName" has been sent to remote printer "$printerName" successfully.', style: const TextStyle(color: Colors.white70)),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('OK'),
-                  ),
-                ],
+                content: Text('"$fileName" sent to "$printerName" successfully.',
+                    style: const TextStyle(color: Colors.white70)),
+                actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
               );
             }
 
@@ -484,15 +870,13 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (isUploading) ...[
+                  if (isUploading)
                     LinearProgressIndicator(
-                      value: uploadProgress,
-                      color: const Color(0xFF00BFA5),
-                      backgroundColor: Colors.white24,
-                    ),
-                  ] else ...[
+                        value: uploadProgress,
+                        color: const Color(0xFF00BFA5),
+                        backgroundColor: Colors.white24)
+                  else
                     const CircularProgressIndicator(color: Color(0xFF00BFA5)),
-                  ],
                   const SizedBox(height: 16),
                   Text(statusText, style: const TextStyle(color: Colors.white70, fontSize: 13)),
                 ],
@@ -509,7 +893,6 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
       context: context,
       builder: (context) => _RemoteFilePickerDialog(service: service),
     );
-
     if (selectedFile != null && mounted) {
       _showPrintingProgress(service, selectedFile, printerName);
     }
@@ -537,32 +920,22 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
                 ),
               );
             }
-
             final fileName = filePath.split(Platform.isWindows ? '\\' : '/').last;
             if (snapshot.hasError) {
               return AlertDialog(
                 backgroundColor: const Color(0xFF0F1629),
                 title: const Text('Print Job Failed'),
-                content: Text(snapshot.error.toString().replaceAll('Exception: ', ''), style: const TextStyle(color: Colors.white70)),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Close'),
-                  ),
-                ],
+                content: Text(snapshot.error.toString().replaceAll('Exception: ', ''),
+                    style: const TextStyle(color: Colors.white70)),
+                actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close'))],
               );
             }
-
             return AlertDialog(
               backgroundColor: const Color(0xFF0F1629),
               title: const Text('Success'),
-              content: Text('"$fileName" has been sent to remote printer "$printerName" successfully.', style: const TextStyle(color: Colors.white70)),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('OK'),
-                ),
-              ],
+              content: Text('"$fileName" sent to "$printerName" successfully.',
+                  style: const TextStyle(color: Colors.white70)),
+              actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
             );
           },
         );
@@ -593,30 +966,17 @@ class _RemoteFilePickerDialogState extends State<_RemoteFilePickerDialog> {
   }
 
   Future<void> _loadDirectory(String path) async {
-    setState(() {
-      _loading = true;
-      _error = null;
-      _selectedFile = null;
-    });
-
+    setState(() { _loading = true; _error = null; _selectedFile = null; });
     try {
       final items = await widget.service.fetchRemoteFiles(path);
-      setState(() {
-        _items = items;
-        _currentPath = path;
-        _loading = false;
-      });
+      setState(() { _items = items; _currentPath = path; _loading = false; });
     } catch (e) {
-      setState(() {
-        _error = e.toString().replaceAll('Exception: ', '');
-        _loading = false;
-      });
+      setState(() { _error = e.toString().replaceAll('Exception: ', ''); _loading = false; });
     }
   }
 
   void _navigateUp() {
     if (_currentPath.isEmpty) return;
-    // Handle Windows drive letters or unix slash
     final sep = _currentPath.contains('\\') ? '\\' : '/';
     final parts = _currentPath.split(sep);
     if (parts.length <= 1 || (parts.length == 2 && parts[1].isEmpty)) {
@@ -665,9 +1025,7 @@ class _RemoteFilePickerDialogState extends State<_RemoteFilePickerDialog> {
                             final isDir = item['isDir'] as bool? ?? false;
                             final name = item['name'] as String;
                             final path = item['path'] as String;
-
                             final isSelected = _selectedFile == path;
-
                             return ListTile(
                               dense: true,
                               leading: Icon(
@@ -681,9 +1039,7 @@ class _RemoteFilePickerDialogState extends State<_RemoteFilePickerDialog> {
                                 if (isDir) {
                                   _loadDirectory(path);
                                 } else {
-                                  setState(() {
-                                    _selectedFile = path;
-                                  });
+                                  setState(() => _selectedFile = path);
                                 }
                               },
                             );
@@ -694,15 +1050,10 @@ class _RemoteFilePickerDialogState extends State<_RemoteFilePickerDialog> {
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
         ElevatedButton(
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF00BFA5),
-            foregroundColor: Colors.white,
-          ),
+              backgroundColor: const Color(0xFF00BFA5), foregroundColor: Colors.white),
           onPressed: _selectedFile != null ? () => Navigator.pop(context, _selectedFile) : null,
           child: const Text('Select'),
         ),
