@@ -379,6 +379,7 @@ class _FileExplorerScreenState extends State<FileExplorerScreen> {
       }
 
       _showSuccessSnackBar('Folder uploaded successfully!');
+      _showUploadSuccessDialog('Folder "$dirName" and all its contents have been uploaded to the agent successfully.');
       _loadDirectory(_currentPath);
     } catch (e) {
       _showErrorSnackBar('Folder upload failed: $e');
@@ -418,6 +419,7 @@ class _FileExplorerScreenState extends State<FileExplorerScreen> {
         },
       );
       _showSuccessSnackBar('Uploaded "$name" successfully!');
+      _showUploadSuccessDialog('File "$name" has been uploaded to the agent successfully.');
       _loadDirectory(_currentPath);
     } catch (e) {
       _showErrorSnackBar('Upload failed: $e');
@@ -427,6 +429,30 @@ class _FileExplorerScreenState extends State<FileExplorerScreen> {
         _activeTransferName = null;
       });
     }
+  }
+
+  void _showUploadSuccessDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0F1629),
+        title: const Row(
+          children: [
+            Icon(Icons.check_circle_rounded, color: Color(0xFF00BFA5), size: 24),
+            SizedBox(width: 8),
+            Text('Upload Complete', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Text(message, style: const TextStyle(color: Colors.white70, fontSize: 14)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: TextButton.styleFrom(foregroundColor: const Color(0xFF00BFA5)),
+            child: const Text('OK', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showErrorSnackBar(String msg) {
