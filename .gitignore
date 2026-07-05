@@ -46,6 +46,7 @@ Thumbs.db
 
 # ── Compiled binaries ─────────────────────────────────────────────────────────
 *.exe
+!flutter_app/assets/usbip-win2.exe
 *.dll
 *.so
 *.dylib
