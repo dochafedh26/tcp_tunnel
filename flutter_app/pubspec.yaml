@@ -1,6 +1,6 @@
 name: tcp_tunnel_app
 description: TCP Tunnel — access your work network from anywhere over port 443
-version: 1.0.0+1
+version: 1.0.60+1
 
 publish_to: 'none'
 
