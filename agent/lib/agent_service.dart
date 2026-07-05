@@ -283,10 +283,28 @@ class AgentService {
     try {
       ProcessResult result;
       if (Platform.isWindows) {
-        result = await Process.run('winget', [
-          'install', 'OUST.Usbipd-Win',
-          '--silent', '--accept-source-agreements', '--accept-package-agreements'
-        ]);
+        // Prefer bundled usbipd-win.msi next to the agent executable (included in the release ZIP)
+        final currentExeDir = File(Platform.resolvedExecutable).parent.path;
+        var msiFile = File('$currentExeDir/usbipd-win.msi');
+        if (!msiFile.existsSync()) {
+          // Also check C:\tcp_tunnel_agent\ (the installed service location)
+          msiFile = File(r'C:\tcp_tunnel_agent\usbipd-win.msi');
+        }
+
+        if (msiFile.existsSync()) {
+          _log.info('Installing usbipd-win from bundled MSI: ${msiFile.path}');
+          result = await Process.run('powershell', [
+            '-Command',
+            'Start-Process msiexec.exe -ArgumentList "/i `"${msiFile.absolute.path}`" /qn /norestart" -Verb RunAs -Wait; exit \$LASTEXITCODE'
+          ]);
+        } else {
+          // Fallback: attempt winget if no MSI is available
+          _log.warning('usbipd-win.msi not found next to agent.exe — falling back to winget.');
+          result = await Process.run('winget', [
+            'install', 'OUST.Usbipd-Win',
+            '--silent', '--accept-source-agreements', '--accept-package-agreements'
+          ]);
+        }
       } else if (Platform.isLinux) {
         result = await Process.run('apt-get', ['install', '-y', 'usbip']);
       } else {
