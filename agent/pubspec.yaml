@@ -1,6 +1,6 @@
 name: tcp_tunnel_agent
 description: TCP Tunnel Agent — connects to relay server and forwards TCP traffic to work resources
-version: 1.0.61
+version: 1.0.62
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

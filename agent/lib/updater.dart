@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 class AgentUpdater {
-  static const String currentVersion = '1.0.61';
+  static const String currentVersion = '1.0.62';
   static const String repoOwner = 'dochafedh26';
   static const String repoName = 'tcp_tunnel';
 
@@ -11,13 +11,15 @@ class AgentUpdater {
     final client = HttpClient();
     client.userAgent = 'TCP-Tunnel-Agent';
 
-    final githubToken = Platform.environment['GITHUB_TOKEN'] ?? Platform.environment['GITHUB_PAT'];
+    final resolvedToken = (githubToken != null && githubToken.isNotEmpty)
+        ? githubToken
+        : (Platform.environment['GITHUB_TOKEN'] ?? Platform.environment['GITHUB_PAT'] ?? '');
 
     try {
       final uri = Uri.parse('https://api.github.com/repos/$repoOwner/$repoName/releases/latest');
       final request = await client.getUrl(uri);
-      if (githubToken != null && githubToken.isNotEmpty) {
-        request.headers.add('Authorization', 'token $githubToken');
+      if (resolvedToken.isNotEmpty) {
+        request.headers.add('Authorization', 'token $resolvedToken');
       }
       final response = await request.close();
 
@@ -51,7 +53,7 @@ class AgentUpdater {
         if (asset != null) {
           final String downloadUrl = asset['browser_download_url'];
           final int? assetId = asset['id'] as int?;
-          await _performBinarySwap(downloadUrl, assetId, githubToken, client);
+          await _performBinarySwap(downloadUrl, assetId, resolvedToken, client);
         } else {
           stdout.writeln('No suitable binary release found for this OS.');
         }
