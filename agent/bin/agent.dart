@@ -5,6 +5,7 @@ import 'package:args/args.dart';
 import 'package:logging/logging.dart';
 import 'package:tcp_tunnel_agent/agent_service.dart';
 import 'package:tcp_tunnel_agent/updater.dart';
+import 'package:tcp_tunnel_agent/print_queue_worker.dart';
 import 'package:uuid/uuid.dart';
 
 void main(List<String> arguments) async {
@@ -53,6 +54,16 @@ void main(List<String> arguments) async {
       'shared-dir',
       abbr: 's',
       help: 'Directory exposed to remote file explorer requests',
+      defaultsTo: '',
+    )
+    ..addOption(
+      'print-api',
+      help: 'Base URL of the REST API backend (enables Cloud Print Queue worker)',
+      defaultsTo: '',
+    )
+    ..addOption(
+      'print-token',
+      help: 'Authentication token / JWT used to authenticate print queue polls (defaults to relay token)',
       defaultsTo: '',
     )
     ..addFlag('help', abbr: 'h', negatable: false, help: 'Show this help')
@@ -200,9 +211,20 @@ void main(List<String> arguments) async {
     sharedDir: sharedDir,
   );
 
+  PrintQueueWorker? printWorker;
+  final printApi = args['print-api'] as String;
+  if (printApi.isNotEmpty) {
+    final printToken = (args['print-token'] as String).isNotEmpty
+        ? args['print-token'] as String
+        : token;
+    printWorker = PrintQueueWorker(apiBaseUrl: printApi, token: printToken);
+    printWorker.start();
+  }
+
   // Graceful shutdown on Ctrl+C
   ProcessSignal.sigint.watch().listen((_) async {
     stdout.writeln('\nShutting down agent...');
+    printWorker?.stop();
     agent.stop();
     await Future.delayed(const Duration(milliseconds: 300));
     exit(0);
