@@ -23,6 +23,7 @@ class AgentService {
   WebSocketChannel? _channel;
   bool _running = false;
   late final FileManager _fileManager;
+  DateTime _lastMessageTime = DateTime.now();
 
   /// Active TCP sockets keyed by channelId.
   final Map<String, Socket> _sockets = {};
@@ -102,29 +103,60 @@ class AgentService {
     _channel!.sink.add(Protocol.authMessage(token, 'agent', name: Platform.localHostname));
     _log.info('Auth message sent with hostname: ${Platform.localHostname}');
 
+    _lastMessageTime = DateTime.now();
     final completer = Completer<void>();
+    Timer? livenessTimer;
 
     _channel!.stream.listen(
       _handleMessage,
       onError: (Object e, StackTrace st) {
         _log.severe('WebSocket error', e, st);
+        livenessTimer?.cancel();
         _closeAllSockets();
         if (!completer.isCompleted) completer.completeError(e, st);
       },
       onDone: () {
         _log.warning('WebSocket connection closed by relay');
+        livenessTimer?.cancel();
         _closeAllSockets();
         if (!completer.isCompleted) completer.complete();
       },
       cancelOnError: true,
     );
 
-    await completer.future;
+    // Ping the relay server periodically to keep connection alive and detect half-open states
+    livenessTimer = Timer.periodic(const Duration(seconds: 20), (timer) {
+      if (_channel != null && _running) {
+        try {
+          _channel!.sink.add(jsonEncode({'type': 'ping'}));
+          
+          final lastMessageAge = DateTime.now().difference(_lastMessageTime).inSeconds;
+          if (lastMessageAge > 45) {
+            _log.warning('No activity from relay for $lastMessageAge seconds. Connection is dead. Reconnecting...');
+            timer.cancel();
+            _channel?.sink.close();
+          }
+        } catch (e) {
+          _log.warning('Failed to send heartbeat ping: $e');
+          timer.cancel();
+          _channel?.sink.close();
+        }
+      } else {
+        timer.cancel();
+      }
+    });
+
+    try {
+      await completer.future;
+    } finally {
+      livenessTimer.cancel();
+    }
   }
 
   // ── Message handling ──────────────────────────────────────────────────────
 
   void _handleMessage(dynamic data) {
+    _lastMessageTime = DateTime.now();
     if (data is String) {
       _handleTextMessage(data);
     } else if (Protocol.isDataFrame(data)) {

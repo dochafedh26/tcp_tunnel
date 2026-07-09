@@ -104,6 +104,16 @@ class RelaySession {
    * Forward a message from the client to the agent.
    */
   _handleClientMessage(data, isBinary) {
+    if (!isBinary) {
+      try {
+        const msg = JSON.parse(data.toString());
+        if (msg.type === 'ping') {
+          this.clientWs?.send(JSON.stringify({ type: 'pong' }));
+          return;
+        }
+      } catch (e) {}
+    }
+
     if (!this.agentWs || this.agentWs.readyState !== 1 /* OPEN */) {
       this.logger.warn(`[${this.sessionId}] Client sent data but agent not connected`);
       return;
@@ -126,6 +136,16 @@ class RelaySession {
    * Forward a message from the agent to the client.
    */
   _handleAgentMessage(data, isBinary) {
+    if (!isBinary) {
+      try {
+        const msg = JSON.parse(data.toString());
+        if (msg.type === 'ping') {
+          this.agentWs?.send(JSON.stringify({ type: 'pong' }));
+          return;
+        }
+      } catch (e) {}
+    }
+
     if (!this.clientWs || this.clientWs.readyState !== 1 /* OPEN */) {
       this.logger.warn(`[${this.sessionId}] Agent sent data but client not connected`);
       return;
