@@ -82,10 +82,20 @@ class PrintQueueWorker {
 
       // 3. Print the file silently using Edge
       _log.info('Launching Edge to print $docName silently...');
+      final paths = [
+        r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+        r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
+      ];
+      String edgePath = 'msedge.exe';
+      for (final p in paths) {
+        if (File(p).existsSync()) {
+          edgePath = p;
+          break;
+        }
+      }
       final result = await Process.run(
-        'msedge.exe',
+        edgePath,
         ['--headless', '--print-to-printer', tempFile.path],
-        runInShell: true,
       );
 
       if (result.exitCode == 0) {

@@ -276,6 +276,19 @@ class DeviceManager {
     return list;
   }
 
+  static String _getEdgePath() {
+    final paths = [
+      r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+      r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
+    ];
+    for (final p in paths) {
+      if (File(p).existsSync()) {
+        return p;
+      }
+    }
+    return 'msedge.exe';
+  }
+
   /// Print a local file to a selected printer.
   static Future<bool> printFile(String filePath, String printerName) async {
     try {
@@ -286,9 +299,12 @@ class DeviceManager {
         final ext = filePath.split('.').last.toLowerCase();
         if (ext == 'pdf' || ext == 'html' || ext == 'htm') {
           // Print silently via Microsoft Edge
-          final result = await Process.run('powershell', [
-            '-Command',
-            'Start-Process "msedge.exe" -ArgumentList "--print-to-printer", "--print-to-printer-name=\\"$printerName\\"", "\\"$filePath\\"" -Wait -NoNewWindow'
+          final edgePath = _getEdgePath();
+          final result = await Process.run(edgePath, [
+            '--headless',
+            '--print-to-printer',
+            '--printer-name=$printerName',
+            filePath,
           ]);
           return result.exitCode == 0;
         } else if (ext == 'txt' || ext == 'log') {
