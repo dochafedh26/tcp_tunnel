@@ -36,14 +36,14 @@ if ($appToken -and $appToken -ne "changeme") {
     
     # Update agent_settings.json
     $jsonObj = @{ token = $appToken }
-    $jsonObj | ConvertTo-Json -Compress | Out-File -FilePath $settingsFile -Encoding utf8 -Force
+    [System.IO.File]::WriteAllText($settingsFile, ($jsonObj | ConvertTo-Json -Compress), [System.Text.Encoding]::ASCII)
     
     # Update tcp_tunnel_agent_service.xml
     if (Test-Path $xmlFile) {
         $xmlContent = Get-Content -Path $xmlFile
         # Replace the token parameter inside <arguments>
         $xmlContent = $xmlContent -replace '--token [a-f0-9\-]+', "--token $appToken"
-        $xmlContent | Out-File -FilePath $xmlFile -Encoding utf8 -Force
+        [System.IO.File]::WriteAllText($xmlFile, ($xmlContent -join "`r`n"), [System.Text.Encoding]::ASCII)
     }
 }
 
