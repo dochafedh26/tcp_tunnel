@@ -29,7 +29,7 @@ if (Test-Path $sourceExe) {
 
 # 3. Optional: Align connection token
 # Enter the token from your Flutter app here if you want to sync it:
-$appToken = "ab582572-acac-467a-b21f-712cf0c49b20"
+$appToken = "ab582572-acac-467a-b21f-712cf0c49b16"
 
 if ($appToken -and $appToken -ne "changeme") {
     Write-Host "[*] Updating agent token to match Flutter app ($appToken)..."
