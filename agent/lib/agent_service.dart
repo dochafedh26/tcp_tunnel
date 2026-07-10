@@ -62,11 +62,17 @@ class AgentService {
     int urlIndex = 0;
     while (_running) {
       final currentUrl = relayUrls[urlIndex];
-      try {
-        await _connect(currentUrl);
-      } catch (e, st) {
-        _log.severe('Connection error to $currentUrl', e, st);
-      }
+      
+      await runZonedGuarded(() async {
+        try {
+          await _connect(currentUrl);
+        } catch (e, st) {
+          _log.severe('Connection error to $currentUrl', e, st);
+        }
+      }, (error, stack) {
+        _log.severe('Unhandled asynchronous error in connection zone to $currentUrl', error, stack);
+      });
+
       if (_running) {
         urlIndex = (urlIndex + 1) % relayUrls.length;
         _log.info('Reconnecting in 5 seconds to ${relayUrls[urlIndex]}...');
