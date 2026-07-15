@@ -25,14 +25,16 @@ class RelaySession {
   /**
    * Attach the Flutter client WebSocket.
    * @param {import('ws').WebSocket} ws
+   * @param {string} [clientId]
    */
-  setClient(ws) {
+  setClient(ws, clientId) {
     if (this.clientWs) {
       this.logger.warn(`[${this.sessionId}] Replacing existing client connection`);
       this.clientWs.terminate();
     }
     this.clientWs = ws;
-    this.logger.info(`[${this.sessionId}] Client connected`);
+    this.clientId = clientId || 'Unknown Client';
+    this.logger.info(`[${this.sessionId}] Client "${this.clientId}" connected`);
 
     // Notify client auth succeeded
     ws.send(JSON.stringify({ type: 'auth_ok', role: 'client' }));
@@ -200,6 +202,7 @@ class RelaySession {
     return {
       sessionId: this.sessionId,
       agentName: this.agentName || 'Unknown Agent',
+      clientId: this.clientId || 'Unknown Client',
       hasClient: this.clientWs?.readyState === 1,
       hasAgent: this.agentWs?.readyState === 1,
       channelCount: this.channelCount,

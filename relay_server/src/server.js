@@ -138,7 +138,7 @@ wss.on('connection', (ws, req) => {
 
     // ── Step 3: Attach to session ─────────────────────────────────────────────
     if (role === 'client') {
-      session.setClient(ws);
+      session.setClient(ws, msg.clientId);
     } else {
       session.setAgent(ws, msg.name);
     }
