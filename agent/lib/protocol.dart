@@ -109,6 +109,7 @@ class Protocol {
     List<Map<String, dynamic>> printers,
     List<Map<String, dynamic>> comPorts, {
     bool usbipdMissing = false,
+    Map<String, dynamic>? rdpStatus,
     String? error,
   }) =>
       jsonEncode({
@@ -119,6 +120,7 @@ class Protocol {
         'printers': printers,
         'comPorts': comPorts,
         'usbipdMissing': usbipdMissing,
+        if (rdpStatus != null) 'rdpStatus': rdpStatus,
         'error': error,
       });
 
@@ -158,6 +160,30 @@ class Protocol {
   static String usbUnbindResponse(String requestId, bool success, {String? error}) =>
       jsonEncode({
         'type': 'usb_unbind_response',
+        'requestId': requestId,
+        'success': success,
+        'error': error,
+      });
+
+  static String rdpSessionsResponse(String requestId, bool success, List<Map<String, dynamic>> sessions, {String? error}) =>
+      jsonEncode({
+        'type': 'rdp_sessions_response',
+        'requestId': requestId,
+        'success': success,
+        'sessions': sessions,
+        'error': error,
+      });
+
+  static String rdpWrapperStatusResponse(String requestId, bool installed) =>
+      jsonEncode({
+        'type': 'rdp_wrapper_status_response',
+        'requestId': requestId,
+        'installed': installed,
+      });
+
+  static String rdpWrapperInstallResponse(String requestId, bool success, {String? error}) =>
+      jsonEncode({
+        'type': 'rdp_wrapper_install_response',
         'requestId': requestId,
         'success': success,
         'error': error,

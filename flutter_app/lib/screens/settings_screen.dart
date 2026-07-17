@@ -33,6 +33,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDialogState) {
 
+          int timeoutFor(String rawUrl) {
+            final url = rawUrl.toLowerCase();
+            if (url.contains('onrender.com')) return 35;
+            return 10;
+          }
+
+          String friendlyError(String relay, Object e) {
+            final msg = e.toString();
+            final isTimeout = msg.contains('TimeoutException') || msg.contains('timed out');
+            if (isTimeout) {
+              final isRender = relay.toLowerCase().contains('onrender.com');
+              if (isRender) {
+                return '${_relayLabel(relay)}: Server is waking up (free-tier cold start). Wait ~30s and scan again.';
+              }
+              return '${_relayLabel(relay)}: Timed out. Server may be offline.';
+            }
+            return '${_relayLabel(relay)}: ${msg.replaceAll('Exception: ', '')}';
+          }
+
+          Future<void> fetchFromRelay(String rawUrl, List<Map<String, dynamic>> out) async {
+            var url = rawUrl.trim();
+            if (url.isEmpty) return;
+            if (url.startsWith('wss://')) {
+              url = url.replaceFirst('wss://', 'https://');
+            } else if (url.startsWith('ws://')) {
+              url = url.replaceFirst('ws://', 'http://');
+            } else {
+              url = 'https://$url';
+            }
+            if (url.endsWith('/')) url = url.substring(0, url.length - 1);
+            final timeout = timeoutFor(rawUrl);
+            final response = await http.get(Uri.parse('$url/health')).timeout(Duration(seconds: timeout));
+            if (response.statusCode == 200) {
+              final data = jsonDecode(response.body) as Map<String, dynamic>;
+              final sessions = data['sessions'] as List<dynamic>? ?? [];
+              for (final s in sessions) {
+                final m = Map<String, dynamic>.from(s as Map);
+                m['_relayUrl'] = rawUrl.trim();
+                out.add(m);
+              }
+            }
+          }
+
           Future<void> performQuery() async {
             setDialogState(() {
               isLoading = true;
@@ -40,48 +83,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
               hasQueried = true;
             });
 
-            try {
-              var url = relayUrlCtrl.text.trim();
-              if (url.isEmpty) {
-                throw Exception('Relay URL is empty');
-              }
-              // Translate ws/wss to http/https
-              if (url.startsWith('wss://')) {
-                url = url.replaceFirst('wss://', 'https://');
-              } else if (url.startsWith('ws://')) {
-                url = url.replaceFirst('ws://', 'http://');
-              } else {
-                url = 'https://$url';
-              }
-              if (url.endsWith('/')) {
-                url = url.substring(0, url.length - 1);
-              }
-              final targetUrl = '$url/health';
+            final List<Map<String, dynamic>> found = [];
+            final List<String> errors = [];
 
-              final response = await http.get(Uri.parse(targetUrl)).timeout(const Duration(seconds: 8));
-              if (response.statusCode == 200) {
-                final data = jsonDecode(response.body) as Map<String, dynamic>;
-                final sessions = data['sessions'] as List<dynamic>? ?? [];
-                
-                final foundAgents = sessions.map((s) => s as Map<String, dynamic>).toList();
+            final relaysToScan = {
+              SettingsService.renderRelayUrl,
+              SettingsService.railwayRelayUrl,
+              if (relayUrlCtrl.text.trim().isNotEmpty) relayUrlCtrl.text.trim(),
+            }.toList();
 
-                setDialogState(() {
-                  agents = foundAgents;
-                  isLoading = false;
-                });
-              } else {
-                throw Exception('HTTP Status ${response.statusCode}');
+            await Future.wait(relaysToScan.map((relay) async {
+              try {
+                await fetchFromRelay(relay, found);
+              } catch (e) {
+                errors.add(friendlyError(relay, e));
               }
-            } catch (e) {
-              setDialogState(() {
-                errorMessage = e.toString().replaceAll('Exception: ', '');
-                isLoading = false;
-              });
-            }
+            }));
+
+            setDialogState(() {
+              agents = found;
+              errorMessage = errors.isEmpty ? null : errors.join('\n');
+              isLoading = false;
+            });
           }
 
           Future<void> selectAgent(Map<String, dynamic> agent) async {
             final agentName = agent['agentName'] as String? ?? 'Unknown Agent';
+            final agentRelayUrl = agent['_relayUrl'] as String? ?? relayUrlCtrl.text.trim();
             final tokenCtrl = TextEditingController(text: agent['token'] as String? ?? '');
             bool tokenObscured = true;
 
@@ -150,7 +178,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               final newProfile = MachineProfile(
                 id: const Uuid().v4(),
                 name: agentName,
-                relayUrl: relayUrlCtrl.text.trim(),
+                relayUrl: agentRelayUrl,
                 token: tokenVal,
               );
               list.add(newProfile);
@@ -171,34 +199,61 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: isLoading ? null : performQuery,
+                          icon: const Icon(Icons.sensors, size: 14),
+                          label: const Text('Scan Both Relays', style: TextStyle(fontSize: 12)),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFF00BFA5),
+                            side: const BorderSide(color: Color(0xFF00BFA5)),
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
                   TextField(
                     controller: relayUrlCtrl,
-                    style: const TextStyle(color: Colors.white),
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
                     decoration: InputDecoration(
-                      labelText: 'Relay Server URL',
-                      labelStyle: const TextStyle(color: Color(0xFF8892A4)),
-                      hintText: 'wss://...',
-                      hintStyle: const TextStyle(color: Color(0xFF4A5568)),
+                      labelText: 'Custom Relay URL (optional)',
+                      labelStyle: const TextStyle(color: Color(0xFF8892A4), fontSize: 11),
+                      hintText: 'wss://... (scanned in addition to both defaults)',
+                      hintStyle: const TextStyle(color: Color(0xFF4A5568), fontSize: 11),
                       enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF1A2340))),
                       focusedBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF00BFA5))),
                       suffixIcon: IconButton(
-                        icon: const Icon(Icons.search, color: Color(0xFF00BFA5)),
-                        onPressed: performQuery,
+                        icon: const Icon(Icons.search, color: Color(0xFF00BFA5), size: 18),
+                        onPressed: isLoading ? null : performQuery,
                       ),
                     ),
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 16),
                   if (isLoading)
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: 24),
                       child: CircularProgressIndicator(color: Color(0xFF00BFA5)),
                     )
-                  else if (errorMessage != null)
+                  else if (!hasQueried)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 12),
+                      child: Text(
+                        'Tap "Scan Both Relays" to discover agents on Render and Railway.',
+                        style: TextStyle(color: Color(0xFF8892A4), fontSize: 12),
+                        textAlign: TextAlign.center,
+                      ),
+                    )
+                  else if (errorMessage != null && agents.isEmpty)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       child: Text(
-                        'Error: $errorMessage',
-                        style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+                        'Errors:\n$errorMessage',
+                        style: const TextStyle(color: Colors.redAccent, fontSize: 12),
                         textAlign: TextAlign.center,
                       ),
                     )
@@ -206,7 +261,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: 16),
                       child: Text(
-                        'No agents currently connected to this relay.',
+                        'No agents found on either relay.',
                         style: TextStyle(color: Colors.white70, fontSize: 13),
                         textAlign: TextAlign.center,
                       ),
@@ -221,6 +276,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           final name = a['agentName'] as String? ?? 'Unknown';
                           final hasClient = a['hasClient'] as bool? ?? false;
                           final hasAgent = a['hasAgent'] as bool? ?? false;
+                          final relayUrl = a['_relayUrl'] as String? ?? '';
 
                           if (!hasAgent) return const SizedBox.shrink();
 
@@ -234,18 +290,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             child: ListTile(
                               leading: const Icon(Icons.computer, color: Color(0xFF00E5FF)),
                               title: Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-                              subtitle: Text(
-                                hasClient ? 'In Use (Tunnel Busy)' : 'Available (Waiting for connection)',
-                                style: TextStyle(
-                                  color: hasClient ? Colors.orangeAccent : const Color(0xFF00BFA5),
-                                  fontSize: 11,
-                                ),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    hasClient ? 'In Use (Tunnel Busy)' : 'Available',
+                                    style: TextStyle(
+                                      color: hasClient ? Colors.orangeAccent : const Color(0xFF00BFA5),
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                  Text(
+                                    _relayLabel(relayUrl),
+                                    style: const TextStyle(color: Color(0xFF4A90D9), fontSize: 10),
+                                  ),
+                                ],
                               ),
                               trailing: const Icon(Icons.chevron_right, color: Color(0xFF8892A4), size: 18),
                               onTap: () => selectAgent(a),
                             ),
                           );
                         },
+                      ),
+                    ),
+                  if (errorMessage != null && agents.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        '⚠ Partial errors: $errorMessage',
+                        style: const TextStyle(color: Colors.orangeAccent, fontSize: 11),
+                        textAlign: TextAlign.center,
                       ),
                     ),
                 ],
@@ -286,6 +360,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final urlCtrl = TextEditingController(text: existing?.relayUrl ?? (isEdit ? '' : SettingsService.defaultRelayUrl));
     final tokenCtrl = TextEditingController(text: existing?.token ?? const Uuid().v4());
     bool tokenObscured = true;
+    String selectedRelay = _relayPresetFor(urlCtrl.text);
 
     showDialog(
       context: context,
@@ -306,6 +381,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF1A2340))),
                     focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF00BFA5))),
                   ),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: selectedRelay,
+                  dropdownColor: const Color(0xFF0F1629),
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Relay Server',
+                    labelStyle: TextStyle(color: Color(0xFF8892A4)),
+                    enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF1A2340))),
+                    focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF00BFA5))),
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'render', child: Text('Render (tcp-tunnel-wt89)')),
+                    DropdownMenuItem(value: 'railway', child: Text('Railway (previous relay)')),
+                    DropdownMenuItem(value: 'custom', child: Text('Custom relay URL')),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setDialogState(() {
+                      selectedRelay = value;
+                      switch (value) {
+                        case 'render':
+                          urlCtrl.text = SettingsService.renderRelayUrl;
+                          break;
+                        case 'railway':
+                          urlCtrl.text = SettingsService.railwayRelayUrl;
+                          break;
+                        case 'custom':
+                          break;
+                      }
+                    });
+                  },
                 ),
                 const SizedBox(height: 12),
                 TextField(
@@ -401,6 +509,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
     );
+  }
+
+  String _relayPresetFor(String relayUrl) {
+    final url = relayUrl.trim().toLowerCase();
+    if (url.contains('tcp-tunnel-wt89.onrender.com')) return 'render';
+    if (url.contains('tcptunnel-production.up.railway.app')) return 'railway';
+    return 'custom';
+  }
+
+  String _relayLabel(String relayUrl) {
+    final url = relayUrl.trim().toLowerCase();
+    if (url.contains('tcp-tunnel-wt89.onrender.com')) return 'via Render';
+    if (url.contains('tcptunnel-production.up.railway.app')) return 'via Railway';
+    return 'via $relayUrl';
   }
 
   Future<void> _deleteProfile(MachineProfile profile) async {

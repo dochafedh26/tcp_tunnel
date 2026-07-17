@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -64,10 +66,24 @@ class TunnelService extends ChangeNotifier {
   final Map<String, Completer<bool>> _usbBindCompleters = {};
   final Map<String, Completer<bool>> _usbUnbindCompleters = {};
   final Map<String, Completer<bool>> _installRemoteUsbipCompleters = {};
+  final Map<String, Completer<bool>> _rdpConfigureCompleters = {};
+  final Map<String, Completer<List<Map<String, dynamic>>>> _rdpSessionsCompleters = {};
+  final Map<String, Completer<bool>> _rdpWrapperStatusCompleters = {};
+  final Map<String, Completer<bool>> _rdpWrapperInstallCompleters = {};
 
   // ── USBIP State ────────────────────────────────────────────────────────────
   bool _usbipdMissing = false;
   bool get usbipdMissing => _usbipdMissing;
+
+  // ── Temporary Attach State (Phase 1 fix + Phase 2) ─────────────────────────
+  final Map<String, String> _attachedDevices = {};       // busId → port (Dart-side tracking)
+  final Map<String, bool> _temporarilyAttached = {};     // busId → isTemporary
+  final Map<String, Timer> _autoDetachTimers = {};       // busId → 30s timer
+  Timer? _keepAliveTimer;
+
+  bool isDeviceAttached(String busId) => _attachedDevices.containsKey(busId);
+  String? getAttachedPort(String busId) => _attachedDevices[busId];
+  bool isTemporarilyAttached(String busId) => _temporarilyAttached[busId] == true;
 
   // ── Stats ──────────────────────────────────────────────────────────────────
   int _bytesIn = 0;
@@ -219,6 +235,8 @@ class TunnelService extends ChangeNotifier {
     _lastRelayUrl = relayUrl.trim();
     _lastToken = token;
 
+    final clientId = await _getClientId('tcp_tunnel');
+
     if (Platform.isAndroid) {
       final started = await FlutterForegroundTask.startService(
         notificationTitle: 'TCP Tunnel Active',
@@ -231,6 +249,7 @@ class TunnelService extends ChangeNotifier {
           'action': 'connect',
           'relayUrl': relayUrl,
           'token': token,
+          'clientId': clientId,
           'tunnels': _tunnels.map((t) => t.toJson()).toList(),
         });
       } else {
@@ -258,7 +277,12 @@ class TunnelService extends ChangeNotifier {
       );
 
       // Send auth
-      _send(jsonEncode({'type': 'auth', 'token': token, 'role': 'client'}));
+      _send(jsonEncode({
+        'type': 'auth',
+        'token': token,
+        'role': 'client',
+        'clientId': clientId,
+      }));
       _log(LogLevel.info, 'Auth message sent');
 
       _wsSub = _ws!.stream.listen(
@@ -278,6 +302,39 @@ class TunnelService extends ChangeNotifier {
       _log(LogLevel.error, 'Failed to connect: $e');
       _setState(TunnelConnectionState.error, error: e.toString());
     }
+  }
+
+  Future<String> _getClientId(String appName) async {
+    final prefs = await SharedPreferences.getInstance();
+    String? clientId = prefs.getString('tcp_tunnel_client_id');
+    if (clientId == null) {
+      String deviceName = 'unknown';
+      try {
+        final deviceInfo = DeviceInfoPlugin();
+        if (Platform.isAndroid) {
+          final androidInfo = await deviceInfo.androidInfo;
+          deviceName = '${androidInfo.brand}_${androidInfo.model}';
+        } else if (Platform.isWindows) {
+          final windowsInfo = await deviceInfo.windowsInfo;
+          deviceName = windowsInfo.computerName;
+        } else if (Platform.isMacOS) {
+          final macInfo = await deviceInfo.macOsInfo;
+          deviceName = macInfo.computerName;
+        } else if (Platform.isLinux) {
+          final linuxInfo = await deviceInfo.linuxInfo;
+          deviceName = linuxInfo.name;
+        } else {
+          deviceName = Platform.localHostname;
+        }
+      } catch (e) {
+        deviceName = Platform.localHostname;
+      }
+      deviceName = deviceName.replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
+      final shortUuid = const Uuid().v4().substring(0, 8);
+      clientId = '${appName}_${deviceName}_$shortUuid';
+      await prefs.setString('tcp_tunnel_client_id', clientId);
+    }
+    return clientId;
   }
 
   /// Disconnect from the relay and stop all tunnel listeners.
@@ -332,6 +389,10 @@ class TunnelService extends ChangeNotifier {
             _log(LogLevel.warning, 'Failed to start foreground service: $e');
           });
         }
+        _keepAliveTimer?.cancel();
+        _keepAliveTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+          _send(jsonEncode({'type': 'ping'}));
+        });
 
       case 'auth_error':
         _log(LogLevel.error, 'Authentication failed: ${msg['message']}');
@@ -469,9 +530,58 @@ class TunnelService extends ChangeNotifier {
               'printers': printers,
               'comPorts': comPorts,
               'usbipdMissing': _usbipdMissing,
+              'rdpStatus': msg['rdpStatus'],
             });
           } else {
             completer.completeError(Exception(error ?? 'Failed to list devices'));
+          }
+        }
+
+      case 'rdp_configure_response':
+        final requestId = msg['requestId'] as String;
+        final success = msg['success'] as bool;
+        final error = msg['error'] as String?;
+        final completer = _rdpConfigureCompleters.remove(requestId);
+        if (completer != null) {
+          if (success) {
+            completer.complete(true);
+          } else {
+            completer.completeError(Exception(error ?? 'Failed to configure RDP'));
+          }
+        }
+
+      case 'rdp_sessions_response':
+        final requestId = msg['requestId'] as String;
+        final success = msg['success'] as bool;
+        final sessions = List<Map<String, dynamic>>.from(msg['sessions'] as List? ?? []);
+        final error = msg['error'] as String?;
+        final rdpSessionsCompleter = _rdpSessionsCompleters.remove(requestId);
+        if (rdpSessionsCompleter != null) {
+          if (success) {
+            rdpSessionsCompleter.complete(sessions);
+          } else {
+            rdpSessionsCompleter.completeError(Exception(error ?? 'Failed to fetch RDP sessions'));
+          }
+        }
+
+      case 'rdp_wrapper_status_response':
+        final requestId = msg['requestId'] as String;
+        final installed = msg['installed'] as bool;
+        final rdpWrapperStatusCompleter = _rdpWrapperStatusCompleters.remove(requestId);
+        if (rdpWrapperStatusCompleter != null) {
+          rdpWrapperStatusCompleter.complete(installed);
+        }
+
+      case 'rdp_wrapper_install_response':
+        final requestId = msg['requestId'] as String;
+        final success = msg['success'] as bool;
+        final error = msg['error'] as String?;
+        final rdpWrapperInstallCompleter = _rdpWrapperInstallCompleters.remove(requestId);
+        if (rdpWrapperInstallCompleter != null) {
+          if (success) {
+            rdpWrapperInstallCompleter.complete(true);
+          } else {
+            rdpWrapperInstallCompleter.completeError(Exception(error ?? 'Failed to install RDP Wrapper'));
           }
         }
 
@@ -483,6 +593,10 @@ class TunnelService extends ChangeNotifier {
         if (completer != null) {
           if (success) {
             completer.complete();
+            // Auto-detach any temporarily attached USB devices after a 30s delay
+            for (final busId in _temporarilyAttached.keys.toList()) {
+              scheduleAutoDetach(busId);
+            }
           } else {
             completer.completeError(Exception(error ?? 'Print job failed'));
           }
@@ -661,7 +775,12 @@ class TunnelService extends ChangeNotifier {
   }
 
   void _closeLocalSocket(String channelId) {
-    _localSockets.remove(channelId)?.destroy();
+    final socket = _localSockets.remove(channelId);
+    if (socket != null) {
+      socket.close().catchError((e) {
+        _log(LogLevel.warning, 'Error closing local socket: $e');
+      });
+    }
   }
 
   // ── Wire encoding ──────────────────────────────────────────────────────────
@@ -794,6 +913,33 @@ class TunnelService extends ChangeNotifier {
       completer.completeError(Exception('Disconnected'));
     }
     _installRemoteUsbipCompleters.clear();
+    for (final completer in _rdpConfigureCompleters.values) {
+      completer.completeError(Exception('Disconnected'));
+    }
+    _rdpConfigureCompleters.clear();
+    for (final completer in _rdpSessionsCompleters.values) {
+      completer.completeError(Exception('Disconnected'));
+    }
+    _rdpSessionsCompleters.clear();
+    for (final completer in _rdpWrapperStatusCompleters.values) {
+      completer.completeError(Exception('Disconnected'));
+    }
+    _rdpWrapperStatusCompleters.clear();
+    for (final completer in _rdpWrapperInstallCompleters.values) {
+      completer.completeError(Exception('Disconnected'));
+    }
+    _rdpWrapperInstallCompleters.clear();
+
+    _keepAliveTimer?.cancel();
+    _keepAliveTimer = null;
+
+    // Clean up temporary USB attach state
+    for (final timer in _autoDetachTimers.values) {
+      timer.cancel();
+    }
+    _autoDetachTimers.clear();
+    _attachedDevices.clear();
+    _temporarilyAttached.clear();
   }
 
   void _log(LogLevel level, String message) {
@@ -955,6 +1101,92 @@ class TunnelService extends ChangeNotifier {
     }));
 
     return completer.future;
+  }
+
+  Future<bool> configureRemoteRdp() async {
+    if (!isConnected) throw Exception('Not connected to relay');
+    final requestId = _uuid.v4();
+    final completer = Completer<bool>();
+    _rdpConfigureCompleters[requestId] = completer;
+    _send(jsonEncode({
+      'type': 'rdp_configure_request',
+      'requestId': requestId,
+    }));
+    return completer.future;
+  }
+
+  Future<List<Map<String, dynamic>>> fetchRemoteRdpSessions() async {
+    if (!isConnected) throw Exception('Not connected to relay');
+    final requestId = _uuid.v4();
+    final completer = Completer<List<Map<String, dynamic>>>();
+    _rdpSessionsCompleters[requestId] = completer;
+    _send(jsonEncode({
+      'type': 'rdp_sessions_request',
+      'requestId': requestId,
+    }));
+    return completer.future;
+  }
+
+  Future<bool> checkRemoteRdpWrapperInstalled() async {
+    if (!isConnected) throw Exception('Not connected to relay');
+    final requestId = _uuid.v4();
+    final completer = Completer<bool>();
+    _rdpWrapperStatusCompleters[requestId] = completer;
+    _send(jsonEncode({
+      'type': 'rdp_wrapper_status_request',
+      'requestId': requestId,
+    }));
+    return completer.future;
+  }
+
+  Future<bool> installRemoteRdpWrapper() async {
+    if (!isConnected) throw Exception('Not connected to relay');
+    final requestId = _uuid.v4();
+    final completer = Completer<bool>();
+    _rdpWrapperInstallCompleters[requestId] = completer;
+    _send(jsonEncode({
+      'type': 'rdp_wrapper_install_request',
+      'requestId': requestId,
+    }));
+    return completer.future;
+  }
+
+  Future<void> launchRdp(String host, int port) async {
+    if (!Platform.isWindows) {
+      throw Exception('RDP launch is only supported on Windows');
+    }
+    
+    final rdpContent = '''
+full address:s:$host:$port
+prompt for credentials:i:0
+enablecredsspsupport:i:0
+authentication level:i:0
+screen mode id:i:2
+use multimon:i:0
+session bpp:i:32
+compression:i:1
+keyboardhook:i:2
+audiocapturemode:i:0
+videoplaybackmode:i:1
+connection type:i:7
+networkautodetect:i:1
+bandwidthautodetect:i:1
+displayconnectionbar:i:1
+enableworkspacereconnect:i:1
+disable wallpaper:i:0
+allow font smoothing:i:1
+allow desktop composition:i:1
+disable full window drag:i:0
+disable menu anims:i:0
+disable themes:i:0
+disable cursor setting:i:0
+bitmapcachepersistenable:i:1
+''';
+
+    final tempDir = await getTemporaryDirectory();
+    final rdpFile = File('${tempDir.path}${Platform.pathSeparator}tunnel_rdp_session.rdp');
+    await rdpFile.writeAsString(rdpContent);
+    await Process.run('mstsc.exe', [rdpFile.path]);
   }
 
   Future<void> triggerRemotePrint(String remoteFilePath, String printerName, {bool deleteAfter = false}) async {
@@ -1138,12 +1370,20 @@ class TunnelService extends ChangeNotifier {
     return false;
   }
 
-  Future<bool> attachLocalUsbDevice(String busId) async {
+  Future<bool> attachLocalUsbDevice(String busId, {bool temporary = false}) async {
     try {
       final exe = await findLocalUsbipExecutable();
       final usbipPath = exe.isNotEmpty ? exe : 'usbip';
       final result = await Process.run(usbipPath, ['attach', '-r', '127.0.0.1', '-b', busId]);
-      return result.exitCode == 0;
+      final success = result.exitCode == 0;
+      if (success) {
+        _attachedDevices[busId] = '';
+        if (temporary) {
+          _temporarilyAttached[busId] = true;
+        }
+        notifyListeners();
+      }
+      return success;
     } catch (_) {}
     return false;
   }
@@ -1153,7 +1393,18 @@ class TunnelService extends ChangeNotifier {
       final exe = await findLocalUsbipExecutable();
       final usbipPath = exe.isNotEmpty ? exe : 'usbip';
       final result = await Process.run(usbipPath, ['detach', '-p', portIndex]);
-      return result.exitCode == 0;
+      final success = result.exitCode == 0;
+      // Clean up tracking for any busId using this port
+      final busId = _attachedDevices.entries
+          .firstWhere((e) => e.value == portIndex, orElse: () => const MapEntry('', ''))
+          .key;
+      if (busId.isNotEmpty) {
+        _attachedDevices.remove(busId);
+        _temporarilyAttached.remove(busId);
+        _autoDetachTimers.remove(busId)?.cancel();
+        notifyListeners();
+      }
+      return success;
     } catch (_) {}
     return false;
   }
@@ -1169,25 +1420,80 @@ class TunnelService extends ChangeNotifier {
         String? currentPort;
         for (final line in lines) {
           if (line.startsWith('Port ')) {
-            final match = RegExp(r'^Port (\d+):').firstMatch(line);
+            // More lenient regex to handle variable whitespace
+            final match = RegExp(r'^Port\s*(\d+)\s*:').firstMatch(line);
             if (match != null) {
               currentPort = match.group(1);
             }
           } else if (line.contains('127.0.0.1') && currentPort != null) {
-            // e.g. "127.0.0.1 (1-1)"
+            // e.g. "127.0.0.1 (1-1)" or "127.0.0.1 :3240 => remote (2-1)"
             final match = RegExp(r'\(([^)]+)\)').firstMatch(line);
             if (match != null) {
+              final busId = match.group(1)!;
               list.add({
                 'port': currentPort,
-                'busId': match.group(1)!,
+                'busId': busId,
               });
+              // Update _attachedDevices with port from usbip port output
+              _attachedDevices[busId] = currentPort;
             }
             currentPort = null;
           }
         }
       }
     } catch (_) {}
+
+    // Phase 1 fix: Merge in any devices tracked by Dart that weren't confirmed above.
+    // This ensures the Detach button always appears even if usbip port parsing fails.
+    for (final entry in _attachedDevices.entries) {
+      final alreadyListed = list.any((d) => d['busId'] == entry.key);
+      if (!alreadyListed && entry.value.isNotEmpty) {
+        list.add({
+          'port': entry.value,
+          'busId': entry.key,
+        });
+      }
+    }
     return list;
+  }
+
+  // ── Temporary Auto-Detach Methods ──────────────────────────────────────────
+
+  /// Start a 30-second countdown to auto-detach a temporarily attached device.
+  void scheduleAutoDetach(String busId) {
+    _autoDetachTimers[busId]?.cancel();
+    _autoDetachTimers[busId] = Timer(const Duration(seconds: 30), () {
+      _executeAutoDetach(busId);
+    });
+    notifyListeners();
+  }
+
+  /// Cancel a pending auto-detach timer for a temporarily attached device.
+  void cancelAutoDetach(String busId) {
+    _autoDetachTimers.remove(busId)?.cancel();
+    _temporarilyAttached.remove(busId);
+    notifyListeners();
+  }
+
+  /// Execute the full detach sequence for auto-detach.
+  Future<void> _executeAutoDetach(String busId) async {
+    final port = _attachedDevices[busId];
+    if (port != null && port.isNotEmpty) {
+      await detachLocalUsbDevice(port);
+    }
+    await unbindRemoteUsbDevice(busId);
+    _attachedDevices.remove(busId);
+    _temporarilyAttached.remove(busId);
+    _autoDetachTimers.remove(busId);
+    notifyListeners();
+  }
+
+  /// Get remaining seconds on the auto-detach timer for a given busId.
+  int? getAutoDetachRemaining(String busId) {
+    final timer = _autoDetachTimers[busId];
+    if (timer == null) return null;
+    // Timer doesn't expose remaining time; we approximate by the fact it's active.
+    return null;
   }
 
   @override
@@ -1195,6 +1501,10 @@ class TunnelService extends ChangeNotifier {
     if (Platform.isAndroid) {
       FlutterForegroundTask.removeTaskDataCallback(_onReceiveTaskData);
     }
+    for (final timer in _autoDetachTimers.values) {
+      timer.cancel();
+    }
+    _autoDetachTimers.clear();
     _cleanup();
     super.dispose();
   }

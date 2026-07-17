@@ -51,24 +51,26 @@ const wss = new WebSocketServer({ server });
 // ─── Heartbeat ────────────────────────────────────────────────────────────────
 // Railway's reverse proxy drops idle WebSocket connections after ~60s.
 // Ping all connected clients every 25s to keep the connection alive.
-const HEARTBEAT_INTERVAL_MS = 25_000;
+// Note: We use application-level pings rather than WebSocket-level ping/pong
+// because some cloud proxies (Render free tier) don't forward WebSocket control frames.
+const HEARTBEAT_INTERVAL_MS = 30_000;
+const HEARTBEAT_TIMEOUT_MS = 90_000;
 const heartbeatInterval = setInterval(() => {
+  const now = Date.now();
   wss.clients.forEach((ws) => {
-    if (ws.isAlive === false) {
-      logger.warn('Terminating unresponsive WebSocket client');
+    const lastPing = ws._lastPing || now;
+    if (now - lastPing > HEARTBEAT_TIMEOUT_MS) {
+      logger.warn('Terminating unresponsive WebSocket client (no application-level ping for ' + (now - lastPing) + 'ms)');
       ws.terminate();
-      return;
     }
-    ws.isAlive = false;
-    ws.ping();
   });
 }, HEARTBEAT_INTERVAL_MS);
 
 wss.on('close', () => clearInterval(heartbeatInterval));
 
 wss.on('connection', (ws, req) => {
-  ws.isAlive = true;
-  ws.on('pong', () => { ws.isAlive = true; });
+  ws._lastPing = Date.now();
+  ws.on('pong', () => { ws._lastPing = Date.now(); });
   const clientIp = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown')
     .split(',')[0]
     .trim();

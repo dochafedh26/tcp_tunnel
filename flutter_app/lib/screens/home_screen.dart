@@ -118,7 +118,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               children: [
                 const Icon(Icons.computer_outlined, color: Color(0xFF00BFA5), size: 20),
                 const SizedBox(width: 12),
-                const Text('Active Machine:', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w500)),
+                const Text('Active Server:', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w500)),
                 const SizedBox(width: 12),
                 Expanded(
                   child: DropdownButtonHideUnderline(

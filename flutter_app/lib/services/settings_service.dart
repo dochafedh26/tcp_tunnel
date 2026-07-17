@@ -15,7 +15,13 @@ class SettingsService extends ChangeNotifier {
   static const _keySelectedProfile = 'selected_profile_id';
   static const _keyGitHubToken = 'github_token';
 
-  static const defaultRelayUrl = 'wss://tcptunnel-production.up.railway.app';
+  /// Default relay for newly created profiles.
+  ///
+  /// The client also accepts `https://` URLs and upgrades them to WSS when it
+  /// connects, but storing the WebSocket URL here makes its purpose explicit.
+  static const defaultRelayUrl = 'wss://tcp-tunnel-wt89.onrender.com';
+  static const renderRelayUrl = 'wss://tcp-tunnel-wt89.onrender.com';
+  static const railwayRelayUrl = 'wss://tcptunnel-production.up.railway.app';
   static const defaultToken = 'changeme';
 
   SharedPreferences? _prefs;

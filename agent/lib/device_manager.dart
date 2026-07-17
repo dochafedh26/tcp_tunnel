@@ -555,5 +555,110 @@ if (\$disk) {
     final exe = await _findUsbipdExecutable();
     return exe.isNotEmpty;
   }
+
+  /// Query RDP configuration status on Windows
+  static Future<Map<String, dynamic>> getRdpStatus() async {
+    if (!Platform.isWindows) {
+      return {'supported': false, 'enabled': false, 'running': false};
+    }
+    try {
+      final result = await Process.run('powershell', [
+        '-Command',
+        'try { \$deny = (Get-ItemProperty -Path "HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server" -Name "fDenyTSConnections" -ErrorAction Stop).fDenyTSConnections; \$running = (Get-Service -Name "TermService" -ErrorAction Stop).Status -eq "Running"; \$singleSession = (Get-ItemProperty -Path "HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server" -Name "fSingleSessionPerUser" -ErrorAction SilentlyContinue).fSingleSessionPerUser; \$concurrent = \$singleSession -eq 0; @{Supported=\$true; Enabled=(\$deny -eq 0); Running=\$running; ConcurrentSessions=\$concurrent} | ConvertTo-Json } catch { @{Supported=\$true; Enabled=\$false; Running=\$false; ConcurrentSessions=\$false; Error=\$_.Exception.Message} | ConvertTo-Json }'
+      ]);
+      if (result.exitCode == 0 && result.stdout.toString().trim().isNotEmpty) {
+        final decoded = jsonDecode(result.stdout.toString());
+        return {
+          'supported': true,
+          'enabled': decoded['Enabled'] == true,
+          'running': decoded['Running'] == true,
+          'concurrentSessions': decoded['ConcurrentSessions'] == true,
+        };
+      }
+    } catch (_) {}
+    return {'supported': true, 'enabled': false, 'running': false, 'concurrentSessions': false};
+  }
+
+  /// Automatically configure RDP on Windows (Enable RDP, start service, configure firewall, enable concurrent sessions)
+  static Future<bool> configureRdp() async {
+    if (!Platform.isWindows) return false;
+    try {
+      final script = r'''
+Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -value 0 -ErrorAction Stop
+Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fSingleSessionPerUser" -value 0 -ErrorAction SilentlyContinue
+Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction Stop
+Set-Service -Name "TermService" -StartupType Automatic -Status Running -ErrorAction Stop
+Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -name "LimitBlankPasswordUse" -value 0 -ErrorAction SilentlyContinue
+Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -value 0 -ErrorAction SilentlyContinue
+''';
+      final result = await Process.run('powershell', ['-Command', script]);
+      return result.exitCode == 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Check if RDP Wrapper is installed (enables unlimited concurrent sessions on non-Server Windows)
+  static Future<bool> isRdpWrapperInstalled() async {
+    if (!Platform.isWindows) return false;
+    try {
+      final result = await Process.run('powershell', [
+        '-Command',
+        r'if (Test-Path "$env:ProgramFiles\RDP Wrapper\rdpwrap.dll") { $true } else { $false }'
+      ]);
+      return result.exitCode == 0 && result.stdout.toString().trim() == 'True';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Install RDP Wrapper to enable unlimited concurrent RDP sessions
+  static Future<bool> installRdpWrapper() async {
+    if (!Platform.isWindows) return false;
+    try {
+      // Download latest RDP Wrapper
+      var result = await Process.run('powershell', [
+        '-Command',
+        r'Invoke-WebRequest -Uri "https://github.com/stascorp/rdpwrap/releases/download/v1.6.2/RDPWrap-v1.6.2.zip" -OutFile "$env:TEMP\rdpwrap.zip" -UseBasicParsing'
+      ]);
+      if (result.exitCode != 0) return false;
+
+      // Extract
+      result = await Process.run('powershell', [
+        '-Command',
+        r'Expand-Archive -Path "$env:TEMP\rdpwrap.zip" -DestinationPath "$env:TEMP\rdpwrap" -Force'
+      ]);
+      if (result.exitCode != 0) return false;
+
+      // Install
+      result = await Process.run('powershell', [
+        '-Command',
+        r'Start-Process -FilePath "$env:TEMP\rdpwrap\install.bat" -Verb RunAs -Wait'
+      ]);
+      return result.exitCode == 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// List active RDP sessions on the remote machine
+  static Future<List<Map<String, dynamic>>> getRdpSessions() async {
+    if (!Platform.isWindows) return [];
+    try {
+      final result = await Process.run('powershell', [
+        '-Command',
+        r'query session | Select-Object -Skip 1 | ForEach-Object { $parts = $_ -split "\s+"; if ($parts.Length -ge 4) { [PSCustomObject]@{SessionName=$parts[0]; Username=$parts[1]; ID=$parts[2]; State=$parts[3]} } } | ConvertTo-Json'
+      ]);
+      if (result.exitCode == 0 && result.stdout.toString().trim().isNotEmpty) {
+        final decoded = jsonDecode(result.stdout.toString());
+        if (decoded is List) {
+          return decoded.cast<Map<String, dynamic>>();
+        } else if (decoded is Map) {
+          return [decoded.cast<String, dynamic>()];
+        }
+      }
+    } catch (_) {}
+    return [];
+  }
 }
 

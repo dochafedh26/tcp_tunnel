@@ -19,6 +19,7 @@ class BackgroundTunnelTaskHandler extends TaskHandler {
   
   String? _relayUrl;
   String? _token;
+  String? _clientId;
   List<dynamic> _tunnelsData = [];
   bool _shouldReconnect = false;
   Timer? _reconnectTimer;
@@ -47,6 +48,7 @@ class BackgroundTunnelTaskHandler extends TaskHandler {
         case 'connect':
           _relayUrl = data['relayUrl'] as String?;
           _token = data['token'] as String?;
+          _clientId = data['clientId'] as String?;
           _tunnelsData = data['tunnels'] as List<dynamic>? ?? [];
           _shouldReconnect = true;
           _connect();
@@ -89,7 +91,12 @@ class BackgroundTunnelTaskHandler extends TaskHandler {
         pingInterval: const Duration(seconds: 20),
       );
       
-      _send(jsonEncode({'type': 'auth', 'token': _token, 'role': 'client'}));
+      _send(jsonEncode({
+        'type': 'auth',
+        'token': _token,
+        'role': 'client',
+        'clientId': _clientId,
+      }));
       _log('info', 'Auth message sent');
       
       _wsSub = _ws!.stream.listen(
@@ -299,8 +306,13 @@ class BackgroundTunnelTaskHandler extends TaskHandler {
   }
 
   void _closeLocalSocket(String channelId) {
-    _localSockets.remove(channelId)?.destroy();
-    _notifyStats();
+    final socket = _localSockets.remove(channelId);
+    if (socket != null) {
+      socket.close().catchError((e) {
+        _log('warning', 'Error closing local socket: $e');
+      });
+      _notifyStats();
+    }
   }
 
   void _send(String text) {

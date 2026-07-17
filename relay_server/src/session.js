@@ -110,6 +110,7 @@ class RelaySession {
       try {
         const msg = JSON.parse(data.toString());
         if (msg.type === 'ping') {
+          this.clientWs._lastPing = Date.now();
           this.clientWs?.send(JSON.stringify({ type: 'pong' }));
           return;
         }
@@ -142,6 +143,7 @@ class RelaySession {
       try {
         const msg = JSON.parse(data.toString());
         if (msg.type === 'ping') {
+          this.agentWs._lastPing = Date.now();
           this.agentWs?.send(JSON.stringify({ type: 'pong' }));
           return;
         }

@@ -28,11 +28,18 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
   final Set<String> _sharedDrives = {};
   List<Map<String, String>> _localAttachedDevices = [];
   bool _localUsbipInstalled = true;
+  Map<String, dynamic>? _rdpStatus;
+  bool _configuringRdp = false;
+  bool _rdpWrapperInstalled = false;
+  bool _checkingRdpWrapper = false;
+  bool _installingRdpWrapper = false;
+  List<Map<String, dynamic>> _rdpSessions = [];
+  bool _loadingRdpSessions = false;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkLocalUsbip();
       _refreshDevices();
@@ -76,6 +83,7 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
         _usbDevices = List<Map<String, dynamic>>.from(data['usbDevices'] ?? []);
         _printers = List<Map<String, dynamic>>.from(data['printers'] ?? []);
         _comPorts = List<Map<String, dynamic>>.from(data['comPorts'] ?? []);
+        _rdpStatus = data['rdpStatus'] as Map<String, dynamic>?;
         _localAttachedDevices = localAttached;
         _loading = false;
       });
@@ -87,6 +95,10 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
         });
       }
     }
+
+    // Also check RDP wrapper and sessions in the background
+    _checkRdpWrapperStatus(service);
+    _refreshRdpSessions(service);
   }
 
   @override
@@ -167,6 +179,16 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
                   ],
                 ),
               ),
+              Tab(
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.desktop_windows_rounded, size: 18),
+                    SizedBox(width: 6),
+                    Text('RDP'),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -205,6 +227,7 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
                     _buildUsbTab(service),
                     _buildPrintersTab(service),
                     _buildComPortsTab(),
+                    _buildRdpTab(service),
                   ],
                 ),
     );
@@ -323,6 +346,24 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
                                     ],
                                   ),
                                 ),
+                              if (isAttachedLocally && busId != null && service.isTemporarilyAttached(busId))
+                                const SizedBox(width: 6),
+                              if (isAttachedLocally && busId != null && service.isTemporarilyAttached(busId))
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.amber.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.timer_outlined, size: 10, color: Colors.amber),
+                                      SizedBox(width: 3),
+                                      Text('Temp', style: TextStyle(color: Colors.amber, fontSize: 10, fontWeight: FontWeight.bold)),
+                                    ],
+                                  ),
+                                ),
                             ],
                           ),
                           const SizedBox(height: 2),
@@ -386,6 +427,19 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
                       ),
                     ] else if (isUsbip && busId != null) ...[
                       if (isAttachedLocally) ...[
+                        // "Release Now" button — shown only for temp-attached devices
+                        if (service.isTemporarilyAttached(busId)) ...[
+                          _actionButton(
+                            icon: Icons.cancel_outlined,
+                            label: 'Release Now',
+                            color: Colors.orange,
+                            onPressed: () {
+                              service.cancelAutoDetach(busId);
+                              _detachUsbipDevice(service, busId, localPort);
+                            },
+                          ),
+                          const SizedBox(width: 8),
+                        ],
                         _actionButton(
                           icon: Icons.power_settings_new_rounded,
                           label: 'Detach Local',
@@ -397,7 +451,14 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
                           icon: Icons.link_rounded,
                           label: 'Attach Local',
                           color: const Color(0xFF00BFA5),
-                          onPressed: () => _attachUsbipDevice(service, busId),
+                          onPressed: () => _attachUsbipDevice(service, busId, temporary: false),
+                        ),
+                        const SizedBox(width: 8),
+                        _actionButton(
+                          icon: Icons.timer_outlined,
+                          label: 'Attach (Temp)',
+                          color: const Color(0xFF78909C),
+                          onPressed: () => _attachUsbipDevice(service, busId, temporary: true),
                         ),
                         if (device['status'] == 'Shared') ...[
                           const SizedBox(width: 8),
@@ -1160,7 +1221,7 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
     );
   }
 
-  Future<void> _attachUsbipDevice(TunnelService service, String busId) async {
+  Future<void> _attachUsbipDevice(TunnelService service, String busId, {bool temporary = false}) async {
     setState(() => _loading = true);
     try {
       final hasUsbipTunnel = service.tunnels.any((t) => t.enabled && t.localPort == 3240 && t.remotePort == 3240);
@@ -1196,14 +1257,17 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
         throw Exception('Failed to bind USB device on remote agent.');
       }
 
-      final attachSuccess = await service.attachLocalUsbDevice(busId);
+      final attachSuccess = await service.attachLocalUsbDevice(busId, temporary: temporary);
       if (!attachSuccess) {
         throw Exception('Remote device bound, but local usbip attach failed. Ensure the usbip client is installed locally.');
       }
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('USB device attached successfully!'),
+        final message = temporary
+            ? 'USB device attached temporarily. It will auto-detach 30s after printing.'
+            : 'USB device attached successfully!';
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(message),
           backgroundColor: Colors.green,
         ));
       }
@@ -1275,6 +1339,582 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
     } finally {
       _refreshDevices();
     }
+  }
+
+  Future<void> _checkRdpWrapperStatus(TunnelService service) async {
+    try {
+      setState(() => _checkingRdpWrapper = true);
+      final installed = await service.checkRemoteRdpWrapperInstalled();
+      if (mounted) setState(() => _rdpWrapperInstalled = installed);
+    } catch (_) {
+      if (mounted) setState(() => _rdpWrapperInstalled = false);
+    } finally {
+      if (mounted) setState(() => _checkingRdpWrapper = false);
+    }
+  }
+
+  Future<void> _refreshRdpSessions(TunnelService service) async {
+    try {
+      setState(() => _loadingRdpSessions = true);
+      final sessions = await service.fetchRemoteRdpSessions();
+      if (mounted) setState(() => _rdpSessions = sessions);
+    } catch (_) {
+      if (mounted) setState(() => _rdpSessions = []);
+    } finally {
+      if (mounted) setState(() => _loadingRdpSessions = false);
+    }
+  }
+
+  Widget _buildRdpTab(TunnelService service) {
+    final settings = context.read<SettingsService>();
+    final profileId = settings.selectedProfileId;
+    
+    // Find RDP tunnel
+    TunnelConfig? rdpTunnel;
+    for (final t in service.tunnels) {
+      if (t.remotePort == 3389) {
+        rdpTunnel = t;
+        break;
+      }
+    }
+
+    final isRdpAllowed = _rdpStatus?['enabled'] as bool? ?? false;
+    final isRdpServiceRunning = _rdpStatus?['running'] as bool? ?? false;
+    final concurrentSessions = _rdpStatus?['concurrentSessions'] as bool? ?? false;
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        // RDP Status Card
+        Card(
+          color: const Color(0xFF0F1629),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: Color(0xFF1A2340)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(20.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.desktop_windows_rounded, color: Color(0xFF00BFA5), size: 24),
+                    SizedBox(width: 12),
+                    Text(
+                      'Remote PC RDP Configuration',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                _buildStatusRow(
+                  label: 'RDP Remote Connections',
+                  value: _rdpStatus == null
+                      ? 'Unknown (Fetch Status)'
+                      : (isRdpAllowed ? 'Allowed' : 'Blocked / Disabled'),
+                  status: _rdpStatus == null
+                      ? 'unknown'
+                      : (isRdpAllowed ? 'ok' : 'error'),
+                ),
+                const Divider(color: Color(0xFF1A2340), height: 24),
+                _buildStatusRow(
+                  label: 'RDP Service (TermService)',
+                  value: _rdpStatus == null
+                      ? 'Unknown (Fetch Status)'
+                      : (isRdpServiceRunning ? 'Running' : 'Stopped'),
+                  status: _rdpStatus == null
+                      ? 'unknown'
+                      : (isRdpServiceRunning ? 'ok' : 'error'),
+                ),
+                const Divider(color: Color(0xFF1A2340), height: 24),
+                _buildStatusRow(
+                  label: 'Concurrent Sessions',
+                  value: _rdpStatus == null
+                      ? 'Unknown'
+                      : (concurrentSessions ? 'Enabled' : 'Disabled'),
+                  status: _rdpStatus == null
+                      ? 'unknown'
+                      : (concurrentSessions ? 'ok' : 'error'),
+                ),
+                if (!isRdpAllowed || !isRdpServiceRunning) ...[
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 40,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF00BFA5),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      onPressed: _configuringRdp
+                          ? null
+                          : () async {
+                              setState(() => _configuringRdp = true);
+                              try {
+                                final ok = await service.configureRemoteRdp();
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(ok
+                                          ? 'RDP configured with concurrent sessions enabled!'
+                                          : 'Failed to configure RDP.'),
+                                      backgroundColor: ok ? Colors.green : Colors.redAccent,
+                                    ),
+                                  );
+                                }
+                              } catch (e) {
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Error: ${e.toString().replaceAll('Exception: ', '')}'),
+                                      backgroundColor: Colors.redAccent,
+                                    ),
+                                  );
+                                }
+                              } finally {
+                                if (mounted) {
+                                  setState(() => _configuringRdp = false);
+                                  _refreshDevices();
+                                }
+                              }
+                            },
+                      icon: _configuringRdp
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                            )
+                          : const Icon(Icons.build_circle_outlined, size: 18),
+                      label: Text(_configuringRdp ? 'Configuring RDP...' : 'Auto-Configure RDP (with Concurrent Sessions)'),
+                    ),
+                  ),
+                ] else ...[
+                  const SizedBox(height: 16),
+                  const Row(
+                    children: [
+                      Icon(Icons.check_circle_outline_rounded, color: Colors.green, size: 16),
+                      SizedBox(width: 8),
+                      Text(
+                        'RDP is configured with concurrent sessions!',
+                        style: TextStyle(color: Colors.green, fontSize: 13, fontWeight: FontWeight.w500),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        // RDP Wrapper Card
+        Card(
+          color: const Color(0xFF0F1629),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: Color(0xFF1A2340)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(20.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.extension_rounded, color: Colors.amber, size: 24),
+                    SizedBox(width: 12),
+                    Text(
+                      'RDP Wrapper (Unlimited Concurrent Sessions)',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'On Windows 10/11 Pro, the registry setting alone may not be enough. '
+                  'RDP Wrapper removes the connection limit for true concurrent sessions.',
+                  style: TextStyle(color: Colors.grey.shade400, fontSize: 12, height: 1.4),
+                ),
+                const SizedBox(height: 16),
+                _buildStatusRow(
+                  label: 'RDP Wrapper Installed',
+                  value: _checkingRdpWrapper
+                      ? 'Checking...'
+                      : (_rdpWrapperInstalled ? 'Installed' : 'Not Installed'),
+                  status: _checkingRdpWrapper
+                      ? 'unknown'
+                      : (_rdpWrapperInstalled ? 'ok' : 'error'),
+                ),
+                if (!_rdpWrapperInstalled) ...[
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 40,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.amber.shade700,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      onPressed: _installingRdpWrapper
+                          ? null
+                          : () async {
+                              setState(() => _installingRdpWrapper = true);
+                              try {
+                                final ok = await service.installRemoteRdpWrapper();
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(ok
+                                          ? 'RDP Wrapper installed! Concurrent sessions enabled.'
+                                          : 'Failed to install RDP Wrapper.'),
+                                      backgroundColor: ok ? Colors.green : Colors.redAccent,
+                                    ),
+                                  );
+                                  if (ok) setState(() => _rdpWrapperInstalled = true);
+                                }
+                              } catch (e) {
+                                if (mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text('Error: ${e.toString().replaceAll('Exception: ', '')}'),
+                                      backgroundColor: Colors.redAccent,
+                                    ),
+                                  );
+                                }
+                              } finally {
+                                if (mounted) setState(() => _installingRdpWrapper = false);
+                              }
+                            },
+                      icon: _installingRdpWrapper
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                            )
+                          : const Icon(Icons.download_rounded, size: 18),
+                      label: Text(_installingRdpWrapper ? 'Installing RDP Wrapper...' : 'Install RDP Wrapper on Remote PC'),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        // Active RDP Sessions Card
+        Card(
+          color: const Color(0xFF0F1629),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: Color(0xFF1A2340)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(20.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.group_rounded, color: Color(0xFF00BFA5), size: 24),
+                        SizedBox(width: 12),
+                        Text(
+                          'Active RDP Sessions',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                        ),
+                      ],
+                    ),
+                    IconButton(
+                      icon: _loadingRdpSessions
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF00BFA5)),
+                            )
+                          : const Icon(Icons.refresh_rounded, color: Color(0xFF8892A4), size: 20),
+                      onPressed: _loadingRdpSessions ? null : () => _refreshRdpSessions(service),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (_rdpSessions.isEmpty)
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF161B30),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Center(
+                      child: Text(
+                        'No active RDP sessions.\nClick refresh to check.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Color(0xFF4A5568), fontSize: 13),
+                      ),
+                    ),
+                  )
+                else
+                  ...List.generate(_rdpSessions.length, (index) {
+                    final session = _rdpSessions[index];
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF161B30),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: const Color(0xFF252D4A)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            session['State'] == 'Active'
+                                ? Icons.circle
+                                : Icons.circle_outlined,
+                            size: 10,
+                            color: session['State'] == 'Active'
+                                ? Colors.green
+                                : Colors.grey,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  session['Username'] ?? 'Unknown',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                Text(
+                                  'Session ${session['ID'] ?? '?'} · ${session['State'] ?? '?'}',
+                                  style: const TextStyle(
+                                    color: Color(0xFF8892A4),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        // Launch RDP Card
+        Card(
+          color: const Color(0xFF0F1629),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: Color(0xFF1A2340)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(20.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.rocket_launch_rounded, color: Color(0xFF448AFF), size: 24),
+                    SizedBox(width: 12),
+                    Text(
+                      'Launch Remote Session',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                if (rdpTunnel != null) ...[
+                  Text(
+                    'Local RDP Tunnel Configured:',
+                    style: TextStyle(color: Colors.grey.shade400, fontSize: 13, fontWeight: FontWeight.w500),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF161B30),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFF252D4A)),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.link, color: Color(0xFF448AFF), size: 18),
+                            const SizedBox(width: 8),
+                            Text(
+                              'localhost:${rdpTunnel.localPort}',
+                              style: const TextStyle(color: Colors.white, fontFamily: 'monospace', fontWeight: FontWeight.bold),
+                            ),
+                            const Text('  →  ', style: TextStyle(color: Colors.grey)),
+                            const Text(
+                              'remote:3389',
+                              style: TextStyle(color: Colors.white, fontFamily: 'monospace'),
+                            ),
+                          ],
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: rdpTunnel.enabled && service.isConnected && service.peerConnected
+                                ? Colors.green.withValues(alpha: 0.15)
+                                : Colors.orange.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            rdpTunnel.enabled && service.isConnected && service.peerConnected
+                                ? 'Tunnel Active'
+                                : 'Tunnel Disabled',
+                            style: TextStyle(
+                              color: rdpTunnel.enabled && service.isConnected && service.peerConnected
+                                  ? Colors.green
+                                  : Colors.orange,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF448AFF),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      onPressed: () async {
+                        try {
+                          if (!rdpTunnel!.enabled) {
+                            final updated = rdpTunnel.copyWith(enabled: true);
+                            service.updateTunnel(updated);
+                            await settings.saveTunnelsForProfile(profileId, service.tunnels);
+                            await Future.delayed(const Duration(milliseconds: 600));
+                          }
+                          await service.launchRdp('127.0.0.1', rdpTunnel.localPort);
+                        } catch (e) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Error launching RDP: ${e.toString().replaceAll('Exception: ', '')}'),
+                                backgroundColor: Colors.redAccent,
+                              ),
+                            );
+                          }
+                        }
+                      },
+                      icon: const Icon(Icons.play_arrow_rounded, size: 20),
+                      label: const Text('One-Click Launch RDP Session', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ] else ...[
+                  const Text(
+                    'No RDP Tunnel configuration exists for this profile.',
+                    style: TextStyle(color: Color(0xFF8892A4), height: 1.4),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 40,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF448AFF),
+                        side: const BorderSide(color: Color(0xFF448AFF)),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      onPressed: () async {
+                        try {
+                          int localPort = 13389;
+                          while (service.tunnels.any((t) => t.localPort == localPort)) {
+                            localPort++;
+                          }
+                          final newTunnel = TunnelConfig(
+                            id: const Uuid().v4(),
+                            profileId: profileId,
+                            name: 'Auto Remote Desktop',
+                            localPort: localPort,
+                            remoteHost: '127.0.0.1',
+                            remotePort: 3389,
+                            enabled: true,
+                          );
+                          service.addTunnel(newTunnel);
+                          await settings.saveTunnelsForProfile(profileId, service.tunnels);
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Created RDP tunnel on local port $localPort!'),
+                                backgroundColor: Colors.green,
+                              ),
+                            );
+                            setState(() {});
+                          }
+                        } catch (e) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Error creating tunnel: $e'),
+                                backgroundColor: Colors.redAccent,
+                              ),
+                            );
+                          }
+                        }
+                      },
+                      icon: const Icon(Icons.add_link_rounded, size: 18),
+                      label: const Text('Auto-Create RDP Tunnel & Connect'),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatusRow({required String label, required String value, required String status}) {
+    Color valColor = Colors.grey;
+    IconData icon = Icons.help_outline_rounded;
+    
+    if (status == 'ok') {
+      valColor = Colors.green;
+      icon = Icons.check_circle_outline_rounded;
+    } else if (status == 'error') {
+      valColor = Colors.orangeAccent;
+      icon = Icons.error_outline_rounded;
+    }
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: const TextStyle(color: Color(0xFF8892A4), fontSize: 14)),
+        Row(
+          children: [
+            Icon(icon, color: valColor, size: 16),
+            const SizedBox(width: 6),
+            Text(
+              value,
+              style: TextStyle(color: valColor, fontWeight: FontWeight.w600, fontSize: 14),
+            ),
+          ],
+        ),
+      ],
+    );
   }
 }
 

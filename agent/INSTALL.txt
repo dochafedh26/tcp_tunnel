@@ -1,0 +1,4 @@
+TCP Tunnel Agent - Windows Installer
+=====================================
+1. Keep the installer files in the SAME folder.
+2. Run update_agent_manually.ps1 in an Elevated (Administrator) PowerShell terminal to install/update the service automatically.

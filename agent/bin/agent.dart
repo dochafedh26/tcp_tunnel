@@ -8,6 +8,9 @@ import 'package:tcp_tunnel_agent/updater.dart';
 import 'package:tcp_tunnel_agent/print_queue_worker.dart';
 import 'package:uuid/uuid.dart';
 
+const _legacyRailwayRelayUrl = 'wss://tcptunnel-production.up.railway.app';
+const _renderRelayUrl = 'wss://tcp-tunnel-wt89.onrender.com';
+
 void main(List<String> arguments) async {
   // ── Logging setup ─────────────────────────────────────────────────────────
   Logger.root.level = Level.ALL;
@@ -36,7 +39,7 @@ void main(List<String> arguments) async {
       'relay',
       abbr: 'r',
       help: 'Relay server WebSocket URL(s) (comma-separated for fallbacks)',
-      defaultsTo: 'wss://tcptunnel-production.up.railway.app',
+      defaultsTo: 'wss://tcp-tunnel-wt89.onrender.com',
     )
     ..addOption(
       'token',
@@ -126,7 +129,12 @@ void main(List<String> arguments) async {
     }
   }
 
-  final relayUrl = args['relay'] as String;
+  var relayUrl = args['relay'] as String;
+  if (relayUrl.trim() == _legacyRailwayRelayUrl) {
+    relayUrl = _renderRelayUrl;
+    _migrateLegacyServiceRelay();
+    stdout.writeln('Migrated relay from Railway to Render.');
+  }
   var token = args['token'] as String;
 
   if (token == 'changeme') {
@@ -231,6 +239,27 @@ void main(List<String> arguments) async {
   });
 
   await agent.start();
+}
+
+/// Keeps the persisted WinSW service configuration aligned with the relay
+/// selected by the migration. The current process already uses Render; this
+/// ensures that a later service restart does too.
+void _migrateLegacyServiceRelay() {
+  if (!Platform.isWindows) return;
+
+  final serviceXml = File(r'C:\tcp_tunnel_agent\tcp_tunnel_agent_service.xml');
+  if (!serviceXml.existsSync()) return;
+
+  try {
+    final content = serviceXml.readAsStringSync();
+    if (!content.contains(_legacyRailwayRelayUrl)) return;
+
+    serviceXml.writeAsStringSync(
+      content.replaceAll(_legacyRailwayRelayUrl, _renderRelayUrl),
+    );
+  } catch (e) {
+    stderr.writeln('Warning: Could not update the service relay configuration: $e');
+  }
 }
 
 Future<void> _handleServiceInstall(List<String> arguments) async {
@@ -602,7 +631,7 @@ Future<void> _handleSilentInstall() async {
   <name>TCP Tunnel Agent</name>
   <description>Relays TCP connections through the remote WebSocket tunnel</description>
   <executable>C:\\tcp_tunnel_agent\\agent.exe</executable>
-  <arguments>--relay wss://tcptunnel-production.up.railway.app --token $token</arguments>
+  <arguments>--relay wss://tcp-tunnel-wt89.onrender.com --token $token</arguments>
   <log mode="roll-by-size">
     <sizeThreshold>10240</sizeThreshold> <!-- 10 MB -->
     <keepFiles>5</keepFiles>

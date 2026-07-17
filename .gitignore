@@ -34,6 +34,12 @@ agent/pubspec.lock
 relay_server/node_modules/
 relay_server/.env
 
+# ── Agent updater build artifacts ─────────────────────────────────────────────
+agent/tcp_tunnel_agent_updater/run_agent.log
+agent/tcp_tunnel_agent_updater/run_agent_windows.zip
+agent/tcp_tunnel_agent_updater/tcp_tunnel_agent_windows_*.zip
+agent/tcp_tunnel_agent_updater/spec/
+
 # ── OS & Editor ───────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
@@ -47,6 +53,7 @@ Thumbs.db
 # ── Compiled binaries ─────────────────────────────────────────────────────────
 *.exe
 !flutter_app/assets/usbip-win2.exe
+!agent/tcp_tunnel_agent_updater/run_agent.exe
 *.dll
 *.so
 *.dylib

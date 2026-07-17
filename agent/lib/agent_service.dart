@@ -137,7 +137,7 @@ class AgentService {
           _channel!.sink.add(jsonEncode({'type': 'ping'}));
           
           final lastMessageAge = DateTime.now().difference(_lastMessageTime).inSeconds;
-          if (lastMessageAge > 45) {
+          if (lastMessageAge > 90) {
             _log.warning('No activity from relay for $lastMessageAge seconds. Connection is dead. Reconnecting...');
             timer.cancel();
             _channel?.sink.close();
@@ -297,6 +297,22 @@ class AgentService {
         final requestId = msg['requestId'] as String;
         _handleInstallUsbipRequest(requestId);
 
+      case 'rdp_configure_request':
+        final requestId = msg['requestId'] as String;
+        _handleRdpConfigureRequest(requestId);
+
+      case 'rdp_sessions_request':
+        final requestId = msg['requestId'] as String;
+        _handleRdpSessionsRequest(requestId);
+
+      case 'rdp_wrapper_status_request':
+        final requestId = msg['requestId'] as String;
+        _handleRdpWrapperStatusRequest(requestId);
+
+      case 'rdp_wrapper_install_request':
+        final requestId = msg['requestId'] as String;
+        _handleRdpWrapperInstallRequest(requestId);
+
       default:
         _log.fine('Unhandled message type: $type');
     }
@@ -308,12 +324,59 @@ class AgentService {
       final usbDevices = await DeviceManager.getUsbDevices();
       final printers = await DeviceManager.getPrinters();
       final comPorts = await DeviceManager.getSerialPorts();
+      final rdpStatus = await DeviceManager.getRdpStatus();
       _channel?.sink.add(Protocol.deviceListResponseV2(
         requestId, true, usbDevices, printers, comPorts,
         usbipdMissing: !usbipdInstalled,
+        rdpStatus: rdpStatus,
       ));
     } catch (e) {
       _channel?.sink.add(Protocol.deviceListResponseV2(requestId, false, [], [], [], error: e.toString()));
+    }
+  }
+
+  Future<void> _handleRdpConfigureRequest(String requestId) async {
+    try {
+      final success = await DeviceManager.configureRdp();
+      _channel?.sink.add(jsonEncode({
+        'type': 'rdp_configure_response',
+        'requestId': requestId,
+        'success': success,
+      }));
+    } catch (e) {
+      _channel?.sink.add(jsonEncode({
+        'type': 'rdp_configure_response',
+        'requestId': requestId,
+        'success': false,
+        'error': e.toString(),
+      }));
+    }
+  }
+
+  Future<void> _handleRdpSessionsRequest(String requestId) async {
+    try {
+      final sessions = await DeviceManager.getRdpSessions();
+      _channel?.sink.add(Protocol.rdpSessionsResponse(requestId, true, sessions));
+    } catch (e) {
+      _channel?.sink.add(Protocol.rdpSessionsResponse(requestId, false, [], error: e.toString()));
+    }
+  }
+
+  Future<void> _handleRdpWrapperStatusRequest(String requestId) async {
+    try {
+      final installed = await DeviceManager.isRdpWrapperInstalled();
+      _channel?.sink.add(Protocol.rdpWrapperStatusResponse(requestId, installed));
+    } catch (e) {
+      _channel?.sink.add(Protocol.rdpWrapperStatusResponse(requestId, false));
+    }
+  }
+
+  Future<void> _handleRdpWrapperInstallRequest(String requestId) async {
+    try {
+      final success = await DeviceManager.installRdpWrapper();
+      _channel?.sink.add(Protocol.rdpWrapperInstallResponse(requestId, success));
+    } catch (e) {
+      _channel?.sink.add(Protocol.rdpWrapperInstallResponse(requestId, false, error: e.toString()));
     }
   }
 
@@ -587,7 +650,9 @@ class AgentService {
     _pendingData.remove(channelId);
     final socket = _sockets.remove(channelId);
     if (socket != null) {
-      socket.destroy();
+      socket.close().catchError((e) {
+        _log.warning('Error closing socket: $e');
+      });
       if (notify) {
         _channel?.sink.add(Protocol.closeMessage(channelId));
       }
