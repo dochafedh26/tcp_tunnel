@@ -24,11 +24,32 @@ logging.info("=== run_agent started ===")
 logging.info("source_dir: %s", source_dir)
 logging.info("target_dir: %s", target_dir)
 
+def is_admin():
+    try:
+        import ctypes
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except:
+        return False
+
+def run_as_admin():
+    import ctypes
+    script = sys.executable if getattr(sys, 'frozen', False) else __file__
+    ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, f'"{script}"', None, 1)
+
 def kill_processes():
+    # First try to stop the Windows service gracefully
+    r = subprocess.run(["sc", "stop", "tcp_tunnel_agent_service"], capture_output=True, text=True)
+    logging.info("sc stop tcp_tunnel_agent_service: returncode=%s stdout=%s stderr=%s", r.returncode, r.stdout.strip(), r.stderr.strip())
+    time.sleep(2)
     for proc in ["agent.exe", "tcp-tunnel-agent"]:
         r = subprocess.run(["taskkill", "/F", "/IM", proc], capture_output=True, text=True)
         logging.info("kill %s: returncode=%s stdout=%s stderr=%s", proc, r.returncode, r.stdout.strip(), r.stderr.strip())
     time.sleep(1)
+
+if not is_admin():
+    logging.warning("Not running as administrator, attempting elevation...")
+    run_as_admin()
+    sys.exit(0)
 
 def wipe_target(ignore_errors=False):
     if not os.path.exists(target_dir):
