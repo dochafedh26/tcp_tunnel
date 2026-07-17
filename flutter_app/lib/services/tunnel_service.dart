@@ -1159,8 +1159,8 @@ class TunnelService extends ChangeNotifier {
     final rdpContent = '''
 full address:s:$host:$port
 prompt for credentials:i:0
-enablecredsspsupport:i:0
-authentication level:i:0
+enablecredsspsupport:i:1
+authentication level:i:2
 screen mode id:i:2
 use multimon:i:0
 session bpp:i:32

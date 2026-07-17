@@ -590,6 +590,9 @@ Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction Stop
 Set-Service -Name "TermService" -StartupType Automatic -Status Running -ErrorAction Stop
 Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -name "LimitBlankPasswordUse" -value 0 -ErrorAction SilentlyContinue
 Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -value 0 -ErrorAction SilentlyContinue
+# Fix CredSSP Encryption Oracle Remediation (blocks RDP when NLA is disabled on the client)
+New-Item -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\CredSSP\Parameters' -Force -ErrorAction SilentlyContinue | Out-Null
+Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\CredSSP\Parameters' -name "AllowEncryptionOracle" -value 2 -Type DWord -ErrorAction SilentlyContinue
 ''';
       final result = await Process.run('powershell', ['-Command', script]);
       return result.exitCode == 0;
