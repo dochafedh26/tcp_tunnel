@@ -1,10 +1,12 @@
 /**
- * session.js — RelaySession: pairs a Flutter client with a Dart agent and bridges traffic.
+ * session.js — RelaySession: pairs Flutter clients with a Dart agent and bridges traffic.
+ * Fully supports multiplexing multiple concurrent clients to the same agent.
  */
 
 'use strict';
 
 const { parseMessage } = require('./protocol');
+const { v4: uuidv4 } = require('uuid');
 
 class RelaySession {
   /**
@@ -14,7 +16,9 @@ class RelaySession {
   constructor(sessionId, logger) {
     this.sessionId = sessionId;
     this.logger = logger;
-    this.clientWs = null;
+    this.clients = new Set();
+    this.channelClients = new Map();
+    this.requestClients = new Map();
     this.agentWs = null;
     this.channelCount = 0;
     this.bytesRelayed = 0;
@@ -23,37 +27,59 @@ class RelaySession {
   }
 
   /**
-   * Attach the Flutter client WebSocket.
+   * Attach a Flutter client WebSocket.
+   * Multiple clients are allowed simultaneously.
    * @param {import('ws').WebSocket} ws
    * @param {string} [clientId]
    */
   setClient(ws, clientId) {
-    if (this.clientWs) {
-      this.logger.warn(`[${this.sessionId}] Replacing existing client connection`);
-      this.clientWs.terminate();
+    const formattedClientId = clientId || `Unknown-${uuidv4()}`;
+
+    // Clean up any stale client socket with the exact same clientId
+    for (const oldWs of this.clients) {
+      if (oldWs._clientId === formattedClientId) {
+        this.logger.info(`[${this.sessionId}] Replacing connection for client "${formattedClientId}"`);
+        oldWs.terminate();
+        this.clients.delete(oldWs);
+      }
     }
-    this.clientWs = ws;
-    this.clientId = clientId || 'Unknown Client';
-    this.logger.info(`[${this.sessionId}] Client "${this.clientId}" connected`);
+
+    ws._clientId = formattedClientId;
+    this.clients.add(ws);
+    this.logger.info(`[${this.sessionId}] Client "${ws._clientId}" connected (Active clients: ${this.clients.size})`);
 
     // Notify client auth succeeded
     ws.send(JSON.stringify({ type: 'auth_ok', role: 'client' }));
 
     ws.on('message', (data, isBinary) => this._handleClientMessage(ws, data, isBinary));
     ws.on('close', () => {
-      if (this.clientWs === ws) {
-        this.logger.info(`[${this.sessionId}] Client disconnected`);
-        this.clientWs = null;
+      if (this.clients.has(ws)) {
+        this.logger.info(`[${this.sessionId}] Client "${ws._clientId}" disconnected`);
+        this.clients.delete(ws);
+
+        // Remove any channel/request bindings associated with this client
+        for (const [chanId, client] of this.channelClients.entries()) {
+          if (client === ws) this.channelClients.delete(chanId);
+        }
+        for (const [reqId, client] of this.requestClients.entries()) {
+          if (client === ws) this.requestClients.delete(reqId);
+        }
+
         this._handleClose('client');
       }
     });
     ws.on('error', (err) => {
-      this.logger.error(`[${this.sessionId}] Client WS error: ${err.message}`);
+      this.logger.error(`[${this.sessionId}] Client "${ws._clientId}" WS error: ${err.message}`);
     });
 
-    // If agent is already connected, notify both sides
+    // If agent is already connected, notify the new client
     if (this.agentWs) {
-      this._notifyPeerConnected('client');
+      ws.send(JSON.stringify({ type: 'peer_connected' }));
+      try {
+        this.agentWs.send(JSON.stringify({ type: 'peer_connected' }));
+      } catch (e) {
+        this.logger.warn(`[${this.sessionId}] Error sending peer_connected to agent: ${e.message}`);
+      }
     }
   }
 
@@ -86,20 +112,26 @@ class RelaySession {
       this.logger.error(`[${this.sessionId}] Agent "${this.agentName}" WS error: ${err.message}`);
     });
 
-    // If client is already connected, notify both sides
-    if (this.clientWs) {
+    // If clients are already connected, notify the agent and all clients
+    if (this.clients.size > 0) {
       this._notifyPeerConnected('agent');
     }
   }
 
   /**
-   * Notify both sides that the full session is ready.
+   * Notify connected sides that the session peers are ready.
    * @param {'client'|'agent'} newRole - the role that just connected
    */
   _notifyPeerConnected(newRole) {
-    this.logger.info(`[${this.sessionId}] Both client and agent connected — tunnel ready`);
+    this.logger.info(`[${this.sessionId}] Agent and at least one client connected — tunnel ready`);
     try {
-      this.clientWs?.send(JSON.stringify({ type: 'peer_connected' }));
+      if (newRole === 'agent') {
+        for (const client of this.clients) {
+          if (client.readyState === 1) {
+            client.send(JSON.stringify({ type: 'peer_connected' }));
+          }
+        }
+      }
       this.agentWs?.send(JSON.stringify({ type: 'peer_connected' }));
     } catch (e) {
       this.logger.warn(`[${this.sessionId}] Error sending peer_connected: ${e.message}`);
@@ -107,7 +139,7 @@ class RelaySession {
   }
 
   /**
-   * Forward a message from the client to the agent.
+   * Forward a message from a specific client to the agent.
    */
   _handleClientMessage(ws, data, isBinary) {
     if (!isBinary) {
@@ -118,7 +150,18 @@ class RelaySession {
           ws.send(JSON.stringify({ type: 'pong' }));
           return;
         }
+        if (msg.channelId) {
+          this.channelClients.set(msg.channelId, ws);
+        }
+        if (msg.requestId) {
+          this.requestClients.set(msg.requestId, ws);
+        }
       } catch (e) {}
+    } else {
+      const parsed = parseMessage(data);
+      if (parsed && parsed.type === 'data' && parsed.channelId) {
+        this.channelClients.set(parsed.channelId, ws);
+      }
     }
 
     if (!this.agentWs || this.agentWs.readyState !== 1 /* OPEN */) {
@@ -140,7 +183,7 @@ class RelaySession {
   }
 
   /**
-   * Forward a message from the agent to the client.
+   * Forward a message from the agent to the appropriate client (multiplexed).
    */
   _handleAgentMessage(ws, data, isBinary) {
     if (!isBinary) {
@@ -154,21 +197,52 @@ class RelaySession {
       } catch (e) {}
     }
 
-    if (!this.clientWs || this.clientWs.readyState !== 1 /* OPEN */) {
-      this.logger.warn(`[${this.sessionId}] Agent sent data but client not connected`);
-      return;
-    }
-    try {
-      this.clientWs.send(data, { binary: isBinary });
-      if (isBinary && Buffer.isBuffer(data)) {
-        this.bytesRelayed += data.length;
+    // Binary Data Frames routing
+    if (isBinary) {
+      const parsed = parseMessage(data);
+      if (parsed && parsed.type === 'data' && parsed.channelId) {
+        const targetWs = this.channelClients.get(parsed.channelId);
+        if (targetWs && targetWs.readyState === 1) {
+          targetWs.send(data, { binary: isBinary });
+          this.bytesRelayed += data.length;
+        }
+        return;
       }
-      // Track channel confirmations
-      if (!isBinary) {
-        this._trackChannelStats(data.toString());
+    }
+
+    // JSON Control Messages routing
+    try {
+      const msg = JSON.parse(data.toString());
+      let targetWs = null;
+
+      if (msg.channelId) {
+        targetWs = this.channelClients.get(msg.channelId);
+        // Delete mapping on channel teardown to free memory
+        if (msg.type === 'close' || msg.type === 'error') {
+          this.channelClients.delete(msg.channelId);
+        }
+      } else if (msg.requestId) {
+        targetWs = this.requestClients.get(msg.requestId);
+        this.requestClients.delete(msg.requestId);
+      }
+
+      if (targetWs && targetWs.readyState === 1) {
+        targetWs.send(data, { binary: isBinary });
+      } else {
+        // Fallback: broadcast JSON responses to all clients
+        for (const client of this.clients) {
+          if (client.readyState === 1) {
+            client.send(data, { binary: isBinary });
+          }
+        }
       }
     } catch (e) {
-      this.logger.error(`[${this.sessionId}] Error forwarding agent→client: ${e.message}`);
+      // General fallback: broadcast to all clients if parsing fails
+      for (const client of this.clients) {
+        if (client.readyState === 1) {
+          client.send(data, { binary: isBinary });
+        }
+      }
     }
   }
 
@@ -190,14 +264,20 @@ class RelaySession {
    * @param {'client'|'agent'} role
    */
   _handleClose(role) {
-    // Notify the other side
-    const other = role === 'client' ? this.agentWs : this.clientWs;
-    if (other && other.readyState === 1) {
-      try {
-        other.send(JSON.stringify({ type: 'peer_disconnected', role }));
-      } catch { /* ignore */ }
+    if (role === 'client') {
+      if (this.clients.size === 0) {
+        this.agentWs?.send(JSON.stringify({ type: 'peer_disconnected', role }));
+        this.channelCount = 0;
+      }
+    } else {
+      // Notify all connected clients that the agent has left
+      for (const client of this.clients) {
+        if (client.readyState === 1) {
+          client.send(JSON.stringify({ type: 'peer_disconnected', role }));
+        }
+      }
+      this.channelCount = 0;
     }
-    this.channelCount = 0;
   }
 
   /**
@@ -208,8 +288,8 @@ class RelaySession {
     return {
       sessionId: this.sessionId,
       agentName: this.agentName || 'Unknown Agent',
-      clientId: this.clientId || 'Unknown Client',
-      hasClient: this.clientWs?.readyState === 1,
+      clientId: [...this.clients].map(c => c._clientId).join(', ') || 'No Client',
+      hasClient: this.clients.size > 0,
       hasAgent: this.agentWs?.readyState === 1,
       channelCount: this.channelCount,
       bytesRelayed: this.bytesRelayed,

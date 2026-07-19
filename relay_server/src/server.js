@@ -148,7 +148,7 @@ wss.on('connection', (ws, req) => {
     // ── Step 4: Cleanup on disconnect ─────────────────────────────────────────
     ws.on('close', () => {
       // Remove session when both sides are gone
-      if (!session.clientWs && !session.agentWs) {
+      if (session.clients.size === 0 && !session.agentWs) {
         sessions.delete(sessionKey);
         logger.info(`Session ${session.sessionId} cleaned up`);
       }
