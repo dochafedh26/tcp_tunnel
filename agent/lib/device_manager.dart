@@ -584,9 +584,12 @@ if (\$disk) {
     if (!Platform.isWindows) return false;
     try {
       final script = r'''
+# Restore default TermService DLL path if it was broken by manual RDP Wrapper deletion
+Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Services\TermService\Parameters' -name "ServiceDll" -value "%SystemRoot%\System32\termsrv.dll" -Type ExpandString -ErrorAction SilentlyContinue
 Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -value 0 -ErrorAction Stop
 Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fSingleSessionPerUser" -value 0 -ErrorAction SilentlyContinue
-Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction Stop
+Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
+Enable-NetFirewallRule -DisplayGroup "Bureau à distance" -ErrorAction SilentlyContinue
 Set-Service -Name "TermService" -StartupType Automatic -Status Running -ErrorAction Stop
 Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -name "LimitBlankPasswordUse" -value 0 -ErrorAction SilentlyContinue
 Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -value 0 -ErrorAction SilentlyContinue
@@ -595,8 +598,12 @@ New-Item -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\
 Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\CredSSP\Parameters' -name "AllowEncryptionOracle" -value 2 -Type DWord -ErrorAction SilentlyContinue
 ''';
       final result = await Process.run('powershell', ['-Command', script]);
+      if (result.exitCode != 0) {
+        stderr.writeln('configureRdp failed: stdout=${result.stdout} stderr=${result.stderr}');
+      }
       return result.exitCode == 0;
-    } catch (_) {
+    } catch (e) {
+      stderr.writeln('configureRdp exception: $e');
       return false;
     }
   }
@@ -619,27 +626,51 @@ Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies
   static Future<bool> installRdpWrapper() async {
     if (!Platform.isWindows) return false;
     try {
-      // Download latest RDP Wrapper
+      // Force TLS 1.2 to prevent download connection handshake failures on older systems
       var result = await Process.run('powershell', [
         '-Command',
-        r'Invoke-WebRequest -Uri "https://github.com/stascorp/rdpwrap/releases/download/v1.6.2/RDPWrap-v1.6.2.zip" -OutFile "$env:TEMP\rdpwrap.zip" -UseBasicParsing'
+        r'[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri "https://github.com/stascorp/rdpwrap/releases/download/v1.6.2/RDPWrap-v1.6.2.zip" -OutFile "$env:TEMP\rdpwrap.zip" -UseBasicParsing'
       ]);
-      if (result.exitCode != 0) return false;
+      if (result.exitCode != 0) {
+        stderr.writeln('RDP Wrapper download failed: stdout=${result.stdout} stderr=${result.stderr}');
+        return false;
+      }
 
       // Extract
       result = await Process.run('powershell', [
         '-Command',
         r'Expand-Archive -Path "$env:TEMP\rdpwrap.zip" -DestinationPath "$env:TEMP\rdpwrap" -Force'
       ]);
-      if (result.exitCode != 0) return false;
+      if (result.exitCode != 0) {
+        stderr.writeln('RDP Wrapper extract failed: stdout=${result.stdout} stderr=${result.stderr}');
+        return false;
+      }
 
-      // Install
+      // Download the latest community-maintained rdpwrap.ini to support modern Windows 10/11 versions (force TLS 1.2)
+      try {
+        final iniResult = await Process.run('powershell', [
+          '-Command',
+          r'[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri "https://raw.githubusercontent.com/sebaxakerhtc/rdpwrap.ini/master/rdpwrap.ini" -OutFile "$env:TEMP\rdpwrap\rdpwrap.ini" -UseBasicParsing -ErrorAction Stop'
+        ]);
+        if (iniResult.exitCode != 0) {
+          stderr.writeln('Custom rdpwrap.ini download failed: stdout=${iniResult.stdout} stderr=${iniResult.stderr}');
+        }
+      } catch (e) {
+        stderr.writeln('Exception downloading custom rdpwrap.ini (falling back to default): $e');
+      }
+
+      // Install by running RDPWinst.exe directly (bypasses UAC session 0 prompts and batch file 'pause' hangs)
       result = await Process.run('powershell', [
         '-Command',
-        r'Start-Process -FilePath "$env:TEMP\rdpwrap\install.bat" -Verb RunAs -Wait'
+        r'& "$env:TEMP\rdpwrap\RDPWinst.exe" -i'
       ]);
+      if (result.exitCode != 0) {
+        stderr.writeln('RDPWinst.exe execution failed: stdout=${result.stdout} stderr=${result.stderr}');
+        return false;
+      }
       return result.exitCode == 0;
-    } catch (_) {
+    } catch (e) {
+      stderr.writeln('installRdpWrapper exception: $e');
       return false;
     }
   }

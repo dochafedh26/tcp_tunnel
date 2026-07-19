@@ -39,11 +39,13 @@ class RelaySession {
     // Notify client auth succeeded
     ws.send(JSON.stringify({ type: 'auth_ok', role: 'client' }));
 
-    ws.on('message', (data, isBinary) => this._handleClientMessage(data, isBinary));
+    ws.on('message', (data, isBinary) => this._handleClientMessage(ws, data, isBinary));
     ws.on('close', () => {
-      this.logger.info(`[${this.sessionId}] Client disconnected`);
-      this.clientWs = null;
-      this._handleClose('client');
+      if (this.clientWs === ws) {
+        this.logger.info(`[${this.sessionId}] Client disconnected`);
+        this.clientWs = null;
+        this._handleClose('client');
+      }
     });
     ws.on('error', (err) => {
       this.logger.error(`[${this.sessionId}] Client WS error: ${err.message}`);
@@ -72,11 +74,13 @@ class RelaySession {
     // Notify agent auth succeeded
     ws.send(JSON.stringify({ type: 'auth_ok', role: 'agent' }));
 
-    ws.on('message', (data, isBinary) => this._handleAgentMessage(data, isBinary));
+    ws.on('message', (data, isBinary) => this._handleAgentMessage(ws, data, isBinary));
     ws.on('close', () => {
-      this.logger.info(`[${this.sessionId}] Agent "${this.agentName}" disconnected`);
-      this.agentWs = null;
-      this._handleClose('agent');
+      if (this.agentWs === ws) {
+        this.logger.info(`[${this.sessionId}] Agent "${this.agentName}" disconnected`);
+        this.agentWs = null;
+        this._handleClose('agent');
+      }
     });
     ws.on('error', (err) => {
       this.logger.error(`[${this.sessionId}] Agent "${this.agentName}" WS error: ${err.message}`);
@@ -105,13 +109,13 @@ class RelaySession {
   /**
    * Forward a message from the client to the agent.
    */
-  _handleClientMessage(data, isBinary) {
+  _handleClientMessage(ws, data, isBinary) {
     if (!isBinary) {
       try {
         const msg = JSON.parse(data.toString());
         if (msg.type === 'ping') {
-          this.clientWs._lastPing = Date.now();
-          this.clientWs?.send(JSON.stringify({ type: 'pong' }));
+          ws._lastPing = Date.now();
+          ws.send(JSON.stringify({ type: 'pong' }));
           return;
         }
       } catch (e) {}
@@ -138,13 +142,13 @@ class RelaySession {
   /**
    * Forward a message from the agent to the client.
    */
-  _handleAgentMessage(data, isBinary) {
+  _handleAgentMessage(ws, data, isBinary) {
     if (!isBinary) {
       try {
         const msg = JSON.parse(data.toString());
         if (msg.type === 'ping') {
-          this.agentWs._lastPing = Date.now();
-          this.agentWs?.send(JSON.stringify({ type: 'pong' }));
+          ws._lastPing = Date.now();
+          ws.send(JSON.stringify({ type: 'pong' }));
           return;
         }
       } catch (e) {}

@@ -355,11 +355,11 @@ class BackgroundTunnelTaskHandler extends TaskHandler {
     _wsSub = null;
     await _ws?.sink.close();
     _ws = null;
-    for (final s in _servers.values) {
+    for (final s in _servers.values.toList()) {
       await s.close();
     }
     _servers.clear();
-    for (final s in _localSockets.values) {
+    for (final s in _localSockets.values.toList()) {
       s.destroy();
     }
     _localSockets.clear();

@@ -398,6 +398,14 @@ Future<void> _handleServiceInstall(List<String> arguments) async {
     exit(1);
   }
 
+  // Disable limit blank password use policy to allow blank password RDP logins
+  try {
+    await Process.run('powershell', [
+      '-Command',
+      'Set-ItemProperty -Path "HKLM:\\System\\CurrentControlSet\\Control\\Lsa" -name "LimitBlankPasswordUse" -value 0 -ErrorAction SilentlyContinue'
+    ]);
+  } catch (_) {}
+
   stdout.writeln('====================================================');
   stdout.writeln('Success: TCP Tunnel Agent service installed and started!');
   stdout.writeln('The service will auto-start if the machine restarts.');
@@ -664,6 +672,14 @@ Future<void> _handleSilentInstall() async {
     stderr.writeln('Failed to start service: ${startResult.stderr}\n${startResult.stdout}');
     exit(1);
   }
+
+  // Disable limit blank password use policy to allow blank password RDP logins
+  try {
+    await Process.run('powershell', [
+      '-Command',
+      'Set-ItemProperty -Path "HKLM:\\System\\CurrentControlSet\\Control\\Lsa" -name "LimitBlankPasswordUse" -value 0 -ErrorAction SilentlyContinue'
+    ]);
+  } catch (_) {}
 
   stdout.writeln('====================================================');
   stdout.writeln('Success: TCP Tunnel Agent service installed and started!');

@@ -1806,7 +1806,9 @@ class _DevicesScreenState extends State<DevicesScreen> with SingleTickerProvider
                             await settings.saveTunnelsForProfile(profileId, service.tunnels);
                             await Future.delayed(const Duration(milliseconds: 600));
                           }
-                          await service.launchRdp('127.0.0.1', rdpTunnel.localPort);
+                          if (mounted) {
+                            await service.launchRdp('127.0.0.1', rdpTunnel.localPort, context);
+                          }
                         } catch (e) {
                           if (mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(

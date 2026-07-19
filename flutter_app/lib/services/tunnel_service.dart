@@ -3,8 +3,10 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:web_socket_channel/io.dart';
@@ -1151,16 +1153,14 @@ class TunnelService extends ChangeNotifier {
     return completer.future;
   }
 
-  Future<void> launchRdp(String host, int port) async {
-    if (!Platform.isWindows) {
-      throw Exception('RDP launch is only supported on Windows');
-    }
-    
-    final rdpContent = '''
+  Future<void> launchRdp(String host, int port, [BuildContext? context]) async {
+    if (Platform.isWindows) {
+      final rdpContent = '''
 full address:s:$host:$port
-prompt for credentials:i:0
+username:s:
+prompt for credentials:i:1
 enablecredsspsupport:i:1
-authentication level:i:2
+authentication level:i:0
 screen mode id:i:2
 use multimon:i:0
 session bpp:i:32
@@ -1183,10 +1183,71 @@ disable cursor setting:i:0
 bitmapcachepersistenable:i:1
 ''';
 
-    final tempDir = await getTemporaryDirectory();
-    final rdpFile = File('${tempDir.path}${Platform.pathSeparator}tunnel_rdp_session.rdp');
-    await rdpFile.writeAsString(rdpContent);
-    await Process.run('mstsc.exe', [rdpFile.path]);
+      final tempDir = await getTemporaryDirectory();
+      final rdpFile = File('${tempDir.path}${Platform.pathSeparator}tunnel_rdp_session.rdp');
+      await rdpFile.writeAsString(rdpContent);
+      await Process.run('mstsc.exe', [rdpFile.path]);
+    } else if (Platform.isAndroid || Platform.isIOS) {
+      final uri = Uri.parse('rdp://full%20address=s:$host:$port&prompt%20for%20credentials=i:1');
+      final bool isAppInstalled = await canLaunchUrl(uri);
+      
+      if (isAppInstalled) {
+        try {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        } catch (e) {
+          if (context != null && context.mounted) {
+            _showRdpInstallPrompt(context);
+          } else {
+            throw Exception('Microsoft Remote Desktop client is not installed or could not be launched.');
+          }
+        }
+      } else {
+        if (context != null && context.mounted) {
+          _showRdpInstallPrompt(context);
+        } else {
+          throw Exception('Microsoft Remote Desktop client is not installed.');
+        }
+      }
+    } else {
+      throw Exception('RDP launch is not supported on this platform');
+    }
+  }
+
+  void _showRdpInstallPrompt(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF0F1629),
+        title: const Text('Microsoft Remote Desktop requis', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'L\'application Microsoft Remote Desktop est nécessaire pour se connecter en RDP.\n\nSouhaitez-vous l\'installer maintenant ?',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Annuler', style: TextStyle(color: Color(0xFF8892A4))),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00BFA5)),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final Uri playStoreUri = Uri.parse(
+                Platform.isAndroid
+                    ? 'https://play.google.com/store/apps/details?id=com.microsoft.rdc.android'
+                    : 'https://apps.apple.com/app/microsoft-remote-desktop/id714420560',
+              );
+              try {
+                await launchUrl(playStoreUri, mode: LaunchMode.externalApplication);
+              } catch (_) {
+                await launchUrl(playStoreUri);
+              }
+            },
+            child: const Text('Installer'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> triggerRemotePrint(String remoteFilePath, String printerName, {bool deleteAfter = false}) async {
